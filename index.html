@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<!--
+© 2026 ACuriel. Todos los derechos reservados.
+
+Aplicación privada desarrollada para Mar Jónica 1.
+
+Queda prohibida la copia, reproducción, distribución, modificación
+o reutilización total o parcial del código sin autorización expresa.
+
+Este software está protegido por la legislación de propiedad intelectual.
+-->
+<!-- checkpoint -->
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reserva de pista · Mar Jónica</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body {
+      background:
+        radial-gradient(circle at top left, rgba(34,197,94,0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(59,130,246,0.18), transparent 25%),
+        linear-gradient(180deg, #eff6ff 0%, #f0fdf4 100%);
+      min-height: 100vh;
+    }
+    .glass {
+      backdrop-filter: blur(10px);
+      background: rgba(255,255,255,0.78);
+      border: 1px solid rgba(255,255,255,0.7);
+      box-shadow: 0 10px 30px rgba(15,23,42,0.08);
+    }
+    .slot-btn:disabled { cursor: not-allowed; opacity: 0.55; }
+    .big-emoji { font-size: clamp(2rem, 6vw, 4rem); line-height: 1; }
+
+    #adminHotspot {
+      position: fixed;
+      right: 8px;
+      bottom: 8px;
+      width: 34px;
+      height: 34px;
+      opacity: 0.01;
+      z-index: 60;
+      border-radius: 9999px;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+  </style>
+</head>
+<body class="text-slate-800">
+  <div class="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+    <header class="glass rounded-3xl p-6 md:p-8 mb-6">
+      <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+        <div>
+          <div class="flex items-center gap-4 mb-3">
+            <span class="big-emoji">🎾</span>
+            <div>
+              <h1 class="text-3xl md:text-5xl font-black tracking-tight text-slate-900">Reserva de pista de pádel</h1>
+              <p class="text-lg md:text-xl text-slate-600 font-medium">Urbanización Mar Jónica 🌴</p>
+            </div>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3 text-center">
+          <div class="glass rounded-2xl px-4 py-3">
+            <div class="text-3xl">⏰</div>
+            <div class="text-xs sm:text-sm font-semibold mt-1">24 h antes</div>
+          </div>
+          <div class="glass rounded-2xl px-4 py-3">
+            <div class="text-3xl">🏠</div>
+            <div class="text-xs sm:text-sm font-semibold mt-1">1 reserva/día</div>
+          </div>
+          <div class="glass rounded-2xl px-4 py-3">
+            <div class="text-3xl">📱</div>
+            <div class="text-xs sm:text-sm font-semibold mt-1">Responsive</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div class="xl:col-span-2 space-y-6">
+        <div id="authorizedHomesCard" class="glass rounded-3xl p-5 sm:p-6 hidden">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold">Viviendas habilitadas 🏘️</h2>
+              <p class="text-slate-600 mt-1">Las viviendas autorizadas están integradas en el código y se validan antes de reservar.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button id="refreshBtn" class="rounded-2xl bg-emerald-600 text-white px-4 py-2 font-semibold hover:scale-[1.02] transition">Actualizar datos</button>
+            </div>
+          </div>
+
+          <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-2xl bg-emerald-50 border border-emerald-200 px-4 py-4">
+              <div class="text-sm font-semibold text-emerald-800">Viviendas autorizadas</div>
+              <div id="authorizedCount" class="text-2xl font-black text-emerald-700">0</div>
+            </div>
+            <div class="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-4">
+              <div class="text-sm font-semibold text-amber-800">Viviendas bloqueadas</div>
+              <div id="blockedCount" class="text-2xl font-black text-amber-700">0</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass rounded-3xl p-5 sm:p-6">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold">Selecciona fecha y hora 📅</h2>
+              <p class="text-slate-600 mt-1">Solo se muestran horas reservables dentro de las próximas 24 horas.</p>
+            </div>
+            <div class="rounded-2xl bg-blue-50 border border-blue-200 px-4 py-3">
+              <div class="text-sm font-semibold text-blue-900">Ahora mismo</div>
+              <div id="nowBox" class="text-sm text-blue-700"></div>
+            </div>
+          </div>
+
+          <div class="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-700">Fecha</span>
+              <input id="reservationDate" type="date" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white" />
+            </label>
+            <div class="rounded-2xl bg-slate-50 border border-slate-200 p-4 md:col-span-2">
+              <div class="text-sm font-semibold text-slate-700 mb-2">Horas disponibles</div>
+              <div id="slotsContainer" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass rounded-3xl p-5 sm:p-6">
+          <h2 class="text-2xl font-bold">Reserva seleccionada ✍️</h2>
+          <p class="text-slate-600 mt-1">Elige tu vivienda mediante desplegables.</p>
+
+          <form id="bookingForm" class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-700">Bloque</span>
+              <select id="block" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white">
+                <option value="">Selecciona bloque</option>
+              </select>
+            </label>
+
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-700">Piso</span>
+              <select id="floor" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white">
+                <option value="">Selecciona piso</option>
+              </select>
+            </label>
+
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-700">Puerta</span>
+              <select id="door" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white">
+                <option value="">Selecciona puerta</option>
+              </select>
+            </label>
+
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-700">PIN de la vivienda</span>
+              <input id="homePin" type="password" inputmode="numeric" maxlength="4" placeholder="4 dígitos" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white" />
+            </label>
+
+            <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 flex flex-col justify-center md:col-span-2">
+              <div class="text-sm font-semibold text-emerald-900">Hora elegida</div>
+              <div id="selectedSlotText" class="text-lg font-black text-emerald-700 mt-1">Todavía no has elegido hora</div>
+            </div>
+
+            <div class="md:col-span-2 flex flex-col sm:flex-row gap-3 pt-2">
+              <button type="submit" class="flex-1 rounded-2xl bg-emerald-600 text-white px-5 py-4 text-lg font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-600/20">Confirmar reserva ✅</button>
+              <button type="button" id="resetSelectionBtn" class="rounded-2xl bg-slate-200 text-slate-800 px-5 py-4 font-bold hover:bg-slate-300 transition">Limpiar selección</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <aside class="space-y-6">
+        <div class="glass rounded-3xl p-5 sm:p-6">
+          <h2 class="text-2xl font-bold">Reservas activas 🎯</h2>
+          <p class="text-slate-600 mt-1">Aquí puedes consultar las reservas actuales.</p>
+          <div id="bookingsList" class="mt-4 space-y-3"></div>
+        </div>
+
+        <div class="glass rounded-3xl p-5 sm:p-6 hidden" id="adminCard">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-2xl font-bold">Administrador 🔐</h2>
+            <button id="toggleAdminBtn" class="rounded-2xl bg-slate-900 text-white px-4 py-2 font-bold hover:scale-[1.02] transition">Cerrar</button>
+          </div>
+          <p class="text-slate-600 mt-1">Bloquea o desbloquea viviendas para que no puedan reservar.</p>
+
+          <div id="adminPanel" class="mt-4 space-y-4">
+            <div id="adminLoginBox" class="space-y-3">
+              <label class="block">
+                <span class="text-sm font-semibold text-slate-700">Contraseña de administrador</span>
+                <input id="adminPassword" type="password" placeholder="Introduce la contraseña" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white" />
+              </label>
+              <button id="adminLoginBtn" class="w-full rounded-2xl bg-indigo-600 text-white px-4 py-3 font-bold hover:bg-indigo-700 transition">Entrar</button>
+            </div>
+
+            <div id="adminControls" class="hidden space-y-4">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <select id="adminBlock" class="rounded-2xl border border-slate-300 px-4 py-3 bg-white"></select>
+                <select id="adminFloor" class="rounded-2xl border border-slate-300 px-4 py-3 bg-white"></select>
+                <select id="adminDoor" class="rounded-2xl border border-slate-300 px-4 py-3 bg-white"></select>
+              </div>
+
+              <div class="flex gap-3">
+                <button id="blockHomeBtn" class="flex-1 rounded-2xl bg-amber-500 text-white px-4 py-3 font-bold hover:bg-amber-600 transition">Bloquear vivienda</button>
+                <button id="unblockHomeBtn" class="flex-1 rounded-2xl bg-emerald-600 text-white px-4 py-3 font-bold hover:bg-emerald-700 transition">Desbloquear vivienda</button>
+              </div>
+
+              <div>
+                <div class="text-sm font-semibold text-slate-700 mb-2">Listado de viviendas bloqueadas</div>
+                <div id="blockedHomesList" class="space-y-2"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass rounded-3xl p-5 sm:p-6 hidden">
+          <h2 class="text-2xl font-bold">QR de acceso 🔳</h2>
+          <p class="text-slate-600 mt-1">Pega aquí la URL pública de GitHub Pages y genera el QR.</p>
+          <label class="block mt-4">
+            <span class="text-sm font-semibold text-slate-700">URL pública</span>
+            <input id="publicUrl" type="url" placeholder="https://tuusuario.github.io/padel-mar-jonica/" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white" />
+          </label>
+          <div class="flex gap-3 mt-4">
+            <button id="generateQrBtn" class="flex-1 rounded-2xl bg-indigo-600 text-white px-4 py-3 font-bold hover:bg-indigo-700 transition">Generar QR</button>
+            <button id="downloadQrBtn" class="rounded-2xl bg-slate-200 px-4 py-3 font-bold hover:bg-slate-300 transition">Guardar PNG</button>
+          </div>
+          <div class="mt-5 rounded-3xl bg-white p-4 border border-slate-200 flex items-center justify-center min-h-[220px]">
+            <div id="qrcode"></div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </div>
+
+  <button id="adminHotspot" aria-label="Acceso oculto administrador" type="button"></button>
+
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 hidden px-5 py-3 rounded-2xl text-white font-bold shadow-2xl z-50"></div>
+
+  <div id="manageBookingModal" class="fixed inset-0 bg-slate-900/50 hidden items-center justify-center z-50 p-4">
+    <div class="glass rounded-3xl w-full max-w-md p-6">
+      <h3 class="text-2xl font-bold text-slate-900">Gestionar mi reserva</h3>
+      <p id="manageBookingText" class="text-slate-600 mt-2"></p>
+
+      <label class="block mt-4">
+        <span class="text-sm font-semibold text-slate-700">PIN de la vivienda</span>
+        <input id="manageBookingPin" type="password" inputmode="numeric" maxlength="4" placeholder="4 dígitos" class="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white" />
+      </label>
+
+      <div class="flex gap-3 mt-5">
+        <button id="confirmManageBookingBtn" class="flex-1 rounded-2xl bg-rose-600 text-white px-4 py-3 font-bold hover:bg-rose-700 transition">
+          Anular reserva
+        </button>
+        <button id="closeManageBookingBtn" class="rounded-2xl bg-slate-200 text-slate-800 px-4 py-3 font-bold hover:bg-slate-300 transition">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="mt-12 pb-8">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="glass rounded-3xl px-6 py-6 text-center text-xs sm:text-sm text-slate-600">
+
+        <p class="font-semibold text-slate-800 tracking-wide">
+          Aplicación privada · Mar Jónica 1
+        </p>
+
+        <p class="mt-2">
+          © 2026 <span class="font-semibold text-slate-700">ACuriel</span>. Todos los derechos reservados.
+        </p>
+
+        <p class="mt-2 text-slate-500 leading-relaxed max-w-2xl mx-auto">
+          El diseño, código fuente y funcionalidades de esta aplicación están protegidos por la normativa vigente de propiedad intelectual.
+          Queda prohibida su reproducción, distribución o reutilización total o parcial sin autorización expresa del titular.
+        </p>
+
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const STORAGE_KEYS = {
+      publicUrl: 'marJonicaPublicUrl',
+      adminSession: 'marJonicaAdminSession'
+    };
+
+    const SUPABASE_URL = 'https://ygvddnhvdwgqjttgdcdr.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlndmRkbmh2ZHdncWp0dGdkY2RyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxNDQ4ODIsImV4cCI6MjA5MTcyMDg4Mn0.EZIOS-xKT7ifox9ua63n7VOl-y7sbqsuvTPmgoglDbg';
+
+    const ADMIN_PASSWORD = 'MarJonica2026';
+    const BLOCKS = ['A', 'B', 'C', 'D'];
+    const FLOORS = ['B', '1', '2', 'At.'];
+    const DOORS_DEFAULT = ['1', '2', '3'];
+    const DOORS_BLOCK_D_TOP = ['1', '2'];
+    const PLAY_HOURS = ['10:00', '11:00', '12:00', '13:00', '14:00', '17:00', '18:00', '19:00', '20:00', '21:00'];
+
+    const AUTHORIZED_HOMES = (() => {
+      const homes = [];
+      for (const block of BLOCKS) {
+        for (const floor of FLOORS) {
+          const doors = block === 'D' && (floor === '2' || floor === 'At.') ? DOORS_BLOCK_D_TOP : DOORS_DEFAULT;
+          for (const door of doors) homes.push({ block, floor, door });
+        }
+      }
+      return homes;
+    })();
+
+    let selectedSlotISO = null;
+    let supabaseClient = null;
+    let bookingsCache = [];
+    let blockedHomesCache = [];
+    let adminTapCount = 0;
+    let adminTapTimer = null;
+    let bookingToManageId = null;
+
+    const $ = (id) => document.getElementById(id);
+    const reservationDateInput = $('reservationDate');
+    const slotsContainer = $('slotsContainer');
+    const bookingsList = $('bookingsList');
+    const selectedSlotText = $('selectedSlotText');
+    const blockSelect = $('block');
+    const floorSelect = $('floor');
+    const doorSelect = $('door');
+    const homePinInput = $('homePin');
+    const publicUrlInput = $('publicUrl');
+    const authorizedCount = $('authorizedCount');
+    const blockedCount = $('blockedCount');
+    const nowBox = $('nowBox');
+    const toast = $('toast');
+    const authorizedHomesCard = $('authorizedHomesCard');
+    const manageBookingModal = $('manageBookingModal');
+    const manageBookingText = $('manageBookingText');
+    const manageBookingPin = $('manageBookingPin');
+
+    function showToast(message, type = 'ok') {
+      toast.textContent = message;
+      toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl text-white font-bold shadow-2xl z-50 ${type === 'error' ? 'bg-rose-600' : 'bg-slate-900'}`;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 2600);
+    }
+
+    function homeKey(block, floor, door) {
+      return `${String(block).trim().toUpperCase()}|${String(floor).trim()}|${String(door).trim()}`;
+    }
+
+    function formatHome(block, floor, door) {
+      return `${String(block).trim().toUpperCase()}-${String(floor).trim()}-${String(door).trim()}`;
+    }
+
+    function normalizeFloor(value) {
+      const v = String(value ?? '').trim();
+      if (v.toUpperCase() === 'AT' || v.toUpperCase() === 'AT.') return 'At.';
+      return v;
+    }
+
+    function getDateStringLocal(date = new Date()) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function combineDateAndHour(dateString, hourString) {
+      const [y, m, d] = dateString.split('-').map(Number);
+      const [hh, mm] = hourString.split(':').map(Number);
+      return new Date(y, m - 1, d, hh, mm, 0, 0);
+    }
+
+    function formatDateHuman(dateString) {
+      const date = new Date(dateString + 'T12:00:00');
+      return new Intl.DateTimeFormat('es-ES', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      }).format(date);
+    }
+
+    function formatDateTimeHuman(date) {
+      return new Intl.DateTimeFormat('es-ES', {
+        weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+      }).format(date);
+    }
+
+    function isSlotWithinAllowedRange(dateObj) {
+      const now = new Date();
+      const diff = dateObj.getTime() - now.getTime();
+      return diff > 0 && diff <= 24 * 60 * 60 * 1000;
+    }
+
+    function homeIsAuthorized(block, floor, door) {
+      return AUTHORIZED_HOMES.some(h => homeKey(h.block, h.floor, h.door) === homeKey(block, floor, door));
+    }
+
+    function homeIsBlocked(block, floor, door) {
+      return blockedHomesCache.some(h => homeKey(h.bloque, normalizeFloor(h.piso), h.puerta) === homeKey(block, floor, door));
+    }
+
+    function sameHomeAlreadyBookedSameDay(block, floor, door, dateString) {
+      return bookingsCache.some(b => b.fecha === dateString && homeKey(b.bloque, normalizeFloor(b.piso), b.puerta) === homeKey(block, floor, door));
+    }
+
+    function slotAlreadyBooked(dateString, time) {
+      return bookingsCache.some(b => b.fecha === dateString && b.hora === time);
+    }
+
+    function refreshCounters() {
+      authorizedCount.textContent = AUTHORIZED_HOMES.length;
+      blockedCount.textContent = blockedHomesCache.length;
+    }
+
+    function initSelectors() {
+      const blockOptions = '<option value="">Selecciona bloque</option>' + BLOCKS.map(v => `<option value="${v}">${v}</option>`).join('');
+      const floorOptions = '<option value="">Selecciona piso</option>' + FLOORS.map(v => `<option value="${v}">${v}</option>`).join('');
+      blockSelect.innerHTML = blockOptions;
+      floorSelect.innerHTML = floorOptions;
+      $('adminBlock').innerHTML = blockOptions;
+      $('adminFloor').innerHTML = floorOptions;
+      updateDoorOptions();
+      updateAdminDoorOptions();
+    }
+
+    function updateDoorOptions() {
+      const block = blockSelect.value;
+      const floor = floorSelect.value;
+      const doors = block === 'D' && (floor === '2' || floor === 'At.') ? DOORS_BLOCK_D_TOP : DOORS_DEFAULT;
+      const current = doorSelect.value;
+      doorSelect.innerHTML = '<option value="">Selecciona puerta</option>' + doors.map(v => `<option value="${v}">${v}</option>`).join('');
+      if (doors.includes(current)) doorSelect.value = current;
+    }
+
+    function updateAdminDoorOptions() {
+      const block = $('adminBlock').value;
+      const floor = $('adminFloor').value;
+      const doors = block === 'D' && (floor === '2' || floor === 'At.') ? DOORS_BLOCK_D_TOP : DOORS_DEFAULT;
+      const current = $('adminDoor').value;
+      $('adminDoor').innerHTML = '<option value="">Puerta</option>' + doors.map(v => `<option value="${v}">${v}</option>`).join('');
+      if (doors.includes(current)) $('adminDoor').value = current;
+    }
+
+    function renderSlots() {
+      const selectedDate = reservationDateInput.value;
+      slotsContainer.innerHTML = '';
+
+      if (!selectedDate) {
+        slotsContainer.innerHTML = '<div class="col-span-full text-sm text-slate-500">Selecciona una fecha para ver las horas disponibles.</div>';
+        return;
+      }
+
+      let allowedCount = 0;
+
+      PLAY_HOURS.forEach(hour => {
+        const slotDate = combineDateAndHour(selectedDate, hour);
+        const withinRange = isSlotWithinAllowedRange(slotDate);
+        const booked = slotAlreadyBooked(selectedDate, hour);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `slot-btn rounded-2xl px-4 py-3 text-sm font-bold border transition ${
+          booked ? 'bg-rose-100 text-rose-700 border-rose-200' :
+          withinRange ? 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:scale-[1.02]' :
+          'bg-slate-100 text-slate-400 border-slate-200'
+        }`;
+        btn.textContent = booked ? `${hour} · Ocupada` : hour;
+        btn.disabled = !withinRange || booked;
+
+        if (withinRange) allowedCount++;
+
+        btn.addEventListener('click', () => {
+          selectedSlotISO = `${selectedDate}T${hour}`;
+          selectedSlotText.textContent = `${formatDateHuman(selectedDate)} · ${hour}`;
+          document.querySelectorAll('.slot-btn').forEach(el => el.classList.remove('ring-4', 'ring-emerald-300'));
+          btn.classList.add('ring-4', 'ring-emerald-300');
+        });
+
+        slotsContainer.appendChild(btn);
+      });
+
+      if (allowedCount === 0) {
+        slotsContainer.innerHTML = '<div class="col-span-full text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl p-4">No hay horas reservables para esa fecha dentro del margen de 24 horas.</div>';
+      }
+    }
+
+    function renderBookings() {
+      const bookings = [...bookingsCache].sort((a, b) => new Date(a.slot_iso) - new Date(b.slot_iso));
+
+      if (!bookings.length) {
+        bookingsList.innerHTML = '<div class="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">Aún no hay reservas activas.</div>';
+        return;
+      }
+
+      bookingsList.innerHTML = bookings.map((b, index) => `
+        <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Reserva #${index + 1}</div>
+              <div class="text-lg font-black text-slate-900">${formatDateHuman(b.fecha)} · ${b.hora}</div>
+              <div class="text-sm text-slate-600 mt-1">🏠 ${formatHome(b.bloque, normalizeFloor(b.piso), b.puerta)}</div>
+            </div>
+            <button
+              data-id="${b.id}"
+              data-home="${formatHome(b.bloque, normalizeFloor(b.piso), b.puerta)}"
+              class="manage-booking rounded-xl bg-slate-100 text-slate-700 px-3 py-2 text-xs font-bold hover:bg-slate-200 transition">
+              Gestionar mi reserva
+            </button>
+          </div>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('.manage-booking').forEach(btn => {
+        btn.addEventListener('click', () => {
+          bookingToManageId = btn.getAttribute('data-id');
+          manageBookingText.textContent = `Reserva de ${btn.getAttribute('data-home')}. Introduce el PIN para anularla.`;
+          manageBookingPin.value = '';
+          manageBookingModal.classList.remove('hidden');
+          manageBookingModal.classList.add('flex');
+          manageBookingPin.focus();
+        });
+      });
+    }
+
+    function renderBlockedHomes() {
+      const container = $('blockedHomesList');
+
+      if (!blockedHomesCache.length) {
+        container.innerHTML = '<div class="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">No hay viviendas bloqueadas.</div>';
+        refreshCounters();
+        return;
+      }
+
+      container.innerHTML = blockedHomesCache.map(home => `
+        <div class="rounded-2xl border border-amber-200 bg-amber-50 p-3 flex items-center justify-between gap-3">
+          <span class="font-bold text-amber-900">${formatHome(home.bloque, normalizeFloor(home.piso), home.puerta)}</span>
+          <button data-id="${home.id}" class="quick-unblock rounded-xl bg-white text-amber-800 px-3 py-2 text-xs font-bold border border-amber-300 hover:bg-amber-100 transition">Desbloquear</button>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('.quick-unblock').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!supabaseClient) return showToast('La conexión no está disponible.', 'error');
+          const id = btn.getAttribute('data-id');
+          const { error } = await supabaseClient.from('viviendas_bloqueadas').delete().eq('id', id);
+          if (error) return showToast('No se pudo desbloquear.', 'error');
+          await syncRemoteData();
+          showToast('Vivienda desbloqueada.');
+        });
+      });
+
+      refreshCounters();
+    }
+
+    function validateBooking(block, floor, door, slotISO) {
+      if (!supabaseClient) return 'La app no ha podido conectar con la base de datos.';
+      if (!slotISO) return 'Debes seleccionar una hora.';
+      if (!block || !floor || !door) return 'Debes completar bloque, piso y puerta.';
+      if (!/^\d{4}$/.test(homePinInput.value.trim())) return 'Introduce un PIN de 4 dígitos.';
+      if (block === 'D' && (floor === '2' || floor === 'At.') && !['1', '2'].includes(door)) return 'En el bloque D, plantas 2 y At. solo admiten puerta 1 o 2.';
+      if (!homeIsAuthorized(block, floor, door)) return 'La vivienda indicada no figura entre las viviendas autorizadas.';
+      if (homeIsBlocked(block, floor, door)) return 'Esta vivienda está bloqueada por administración y no puede reservar.';
+
+      const [dateString, time] = slotISO.split('T');
+      const slotDate = combineDateAndHour(dateString, time);
+
+      if (!isSlotWithinAllowedRange(slotDate)) return 'Solo se puede reservar con un máximo de 24 horas de antelación.';
+      if (sameHomeAlreadyBookedSameDay(block, floor, door, dateString)) return 'Cada propietario solo puede tener una reserva al día.';
+      if (slotAlreadyBooked(dateString, time)) return 'Esa hora ya está reservada.';
+
+      return null;
+    }
+
+    async function syncRemoteData() {
+      if (!supabaseClient) return;
+
+      const today = getDateStringLocal(new Date());
+
+      const { data: bookings, error: bookingsError } = await supabaseClient
+        .from('reservas')
+        .select('*')
+        .gte('fecha', today)
+        .order('fecha', { ascending: true })
+        .order('hora', { ascending: true });
+
+      if (bookingsError) {
+        console.error(bookingsError);
+        showToast('Error al leer reservas.', 'error');
+        return;
+      }
+
+      const { data: blocked, error: blockedError } = await supabaseClient
+        .from('viviendas_bloqueadas')
+        .select('*')
+        .order('bloque', { ascending: true })
+        .order('piso', { ascending: true })
+        .order('puerta', { ascending: true });
+
+      if (blockedError) {
+        console.error(blockedError);
+        showToast('Error al leer bloqueos.', 'error');
+        return;
+      }
+
+      bookingsCache = bookings || [];
+      blockedHomesCache = blocked || [];
+      renderBookings();
+      renderBlockedHomes();
+      renderSlots();
+      refreshCounters();
+    }
+
+    async function connectSupabase() {
+      try {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        await syncRemoteData();
+      } catch (error) {
+        console.error(error);
+        showToast('No se pudo conectar con la base de datos.', 'error');
+      }
+    }
+
+    async function addBookingWithPin(block, floor, door, slotISO, pin) {
+      const [fecha, hora] = slotISO.split('T');
+
+      const { error } = await supabaseClient.rpc('create_booking_with_pin', {
+        p_bloque: block,
+        p_piso: floor,
+        p_puerta: door,
+        p_fecha: fecha,
+        p_hora: hora,
+        p_slot_iso: slotISO,
+        p_pin: pin
+      });
+
+      if (error) {
+        console.error(error);
+        throw error;
+      }
+
+      await syncRemoteData();
+    }
+
+    function clearSelection() {
+      selectedSlotISO = null;
+      selectedSlotText.textContent = 'Todavía no has elegido hora';
+      $('bookingForm').reset();
+      initSelectors();
+      homePinInput.value = '';
+      document.querySelectorAll('.slot-btn').forEach(el => el.classList.remove('ring-4', 'ring-emerald-300'));
+    }
+
+    async function blockSelectedHome() {
+      if (!supabaseClient) return showToast('La conexión no está disponible.', 'error');
+
+      const block = $('adminBlock').value;
+      const floor = $('adminFloor').value;
+      const door = $('adminDoor').value;
+
+      if (!block || !floor || !door) return showToast('Selecciona bloque, piso y puerta.', 'error');
+      if (!homeIsAuthorized(block, floor, door)) return showToast('Esa vivienda no existe en el listado autorizado.', 'error');
+      if (homeIsBlocked(block, floor, door)) return showToast('La vivienda ya está bloqueada.', 'error');
+
+      const { error } = await supabaseClient
+        .from('viviendas_bloqueadas')
+        .insert([{ bloque: block, piso: floor, puerta: door }]);
+
+      if (error) return showToast('No se pudo bloquear la vivienda.', 'error');
+
+      await syncRemoteData();
+      showToast('Vivienda bloqueada.');
+    }
+
+    async function unblockSelectedHome() {
+      if (!supabaseClient) return showToast('La conexión no está disponible.', 'error');
+
+      const block = $('adminBlock').value;
+      const floor = $('adminFloor').value;
+      const door = $('adminDoor').value;
+
+      if (!block || !floor || !door) return showToast('Selecciona bloque, piso y puerta.', 'error');
+
+      const { error } = await supabaseClient
+        .from('viviendas_bloqueadas')
+        .delete()
+        .eq('bloque', block)
+        .eq('piso', floor)
+        .eq('puerta', door);
+
+      if (error) return showToast('No se pudo desbloquear la vivienda.', 'error');
+
+      await syncRemoteData();
+      showToast('Vivienda desbloqueada.');
+    }
+
+    function updateAuthorizedHomesVisibility() {
+      const adminCardVisible = !$('adminCard').classList.contains('hidden');
+      authorizedHomesCard.classList.toggle('hidden', !adminCardVisible);
+    }
+
+    function showAdminCard() {
+      $('adminCard').classList.remove('hidden');
+      $('adminPanel').classList.remove('hidden');
+      $('toggleAdminBtn').textContent = 'Cerrar';
+      applyAdminSession();
+      renderBookings();
+      updateAuthorizedHomesVisibility();
+    }
+
+    function hideAdminCard() {
+      $('adminCard').classList.add('hidden');
+      $('adminPanel').classList.add('hidden');
+      $('toggleAdminBtn').textContent = 'Cerrar';
+      updateAuthorizedHomesVisibility();
+    }
+
+    function toggleAdminPanel() {
+      if ($('adminCard').classList.contains('hidden')) {
+        showAdminCard();
+      } else {
+        hideAdminCard();
+      }
+    }
+
+    function handleAdminHotspotTap() {
+      adminTapCount += 1;
+      clearTimeout(adminTapTimer);
+
+      adminTapTimer = setTimeout(() => {
+        adminTapCount = 0;
+      }, 1600);
+
+      if (adminTapCount >= 3) {
+        adminTapCount = 0;
+        showAdminCard();
+        showToast('Panel de administrador visible.');
+      }
+    }
+
+    function applyAdminSession() {
+      const isLogged = localStorage.getItem(STORAGE_KEYS.adminSession) === '1';
+      $('adminControls').classList.toggle('hidden', !isLogged);
+      $('adminLoginBox').classList.toggle('hidden', isLogged);
+    }
+
+    function loginAdmin() {
+      const password = $('adminPassword').value;
+      if (password !== ADMIN_PASSWORD) return showToast('Contraseña incorrecta.', 'error');
+
+      localStorage.setItem(STORAGE_KEYS.adminSession, '1');
+      $('adminPassword').value = '';
+      applyAdminSession();
+      renderBookings();
+      showToast('Acceso de administrador concedido.');
+    }
+
+    function restoreSavedUrl() {
+      const saved = localStorage.getItem(STORAGE_KEYS.publicUrl) || '';
+      publicUrlInput.value = saved;
+      if (saved) generateQr();
+    }
+
+    function generateQr() {
+      const url = publicUrlInput.value.trim();
+      if (!url) return showToast('Introduce una URL pública para generar el QR.', 'error');
+
+      try {
+        new URL(url);
+      } catch {
+        return showToast('La URL no es válida.', 'error');
+      }
+
+      localStorage.setItem(STORAGE_KEYS.publicUrl, url);
+      const qrContainer = $('qrcode');
+      qrContainer.innerHTML = '';
+      new QRCode(qrContainer, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.H });
+      showToast('QR generado correctamente.');
+    }
+
+    function downloadQr() {
+      const img = document.querySelector('#qrcode img');
+      const canvas = document.querySelector('#qrcode canvas');
+      const source = img?.src || canvas?.toDataURL('image/png');
+
+      if (!source) return showToast('Primero genera el QR.', 'error');
+
+      const link = document.createElement('a');
+      link.href = source;
+      link.download = 'qr-mar-jonica.png';
+      link.click();
+    }
+
+    function updateNowBox() {
+      nowBox.textContent = formatDateTimeHuman(new Date());
+    }
+
+    function setDefaultDate() {
+      reservationDateInput.value = getDateStringLocal(new Date());
+      renderSlots();
+    }
+
+    function closeManageBookingModal() {
+      bookingToManageId = null;
+      manageBookingPin.value = '';
+      manageBookingModal.classList.add('hidden');
+      manageBookingModal.classList.remove('flex');
+    }
+
+async function cancelBookingWithPin() {
+  if (!bookingToManageId || typeof bookingToManageId !== 'string') {
+    return showToast('Reserva no válida.', 'error');
+  }
+
+  if (!supabaseClient) {
+    return showToast('La conexión no está disponible.', 'error');
+  }
+
+  const booking = bookingsCache.find(b => String(b.id) === String(bookingToManageId));
+  if (!booking) {
+    return showToast('No se ha encontrado la reserva.', 'error');
+  }
+
+  const block = String(booking.bloque).trim().toUpperCase();
+  const floor = normalizeFloor(booking.piso);
+  const door = String(booking.puerta).trim();
+
+  const viviendaKey = `pinIntentos:${homeKey(block, floor, door)}`;
+  const MAX_INTENTOS = 3;
+  const BLOQUEO_MS = 5 * 60 * 1000; // 5 minutos
+
+  const intentoData = JSON.parse(localStorage.getItem(viviendaKey) || '{}');
+  const ahora = Date.now();
+
+  if (intentoData.bloqueadoHasta && ahora < intentoData.bloqueadoHasta) {
+    return showToast('Vivienda bloqueada, intenta más tarde con PIN correcto', 'error');
+  }
+
+  const pin = manageBookingPin.value.trim();
+  if (!/^\d{4}$/.test(pin)) {
+    return showToast('Introduce un PIN de 4 dígitos.', 'error');
+  }
+
+  try {
+    const { error } = await supabaseClient.rpc('cancel_booking_with_pin', {
+      p_booking_id: bookingToManageId,
+      p_pin: pin
+    });
+
+    if (error) {
+      let intentoData = JSON.parse(localStorage.getItem(viviendaKey) || '{}');
+      intentoData.intentos = (intentoData.intentos || 0) + 1;
+
+      if (intentoData.intentos >= MAX_INTENTOS) {
+        intentoData.bloqueadoHasta = Date.now() + BLOQUEO_MS;
+        intentoData.intentos = 0;
+        localStorage.setItem(viviendaKey, JSON.stringify(intentoData));
+        return showToast('Vivienda bloqueada, intenta más tarde con PIN correcto', 'error');
+      }
+
+      localStorage.setItem(viviendaKey, JSON.stringify(intentoData));
+      return showToast(error.message || 'PIN incorrecto.', 'error');
+    }
+
+    localStorage.removeItem(viviendaKey);
+    closeManageBookingModal();
+    await syncRemoteData();
+    showToast('Reserva anulada correctamente.');
+  } catch (err) {
+    let intentoData = JSON.parse(localStorage.getItem(viviendaKey) || '{}');
+    intentoData.intentos = (intentoData.intentos || 0) + 1;
+
+    if (intentoData.intentos >= MAX_INTENTOS) {
+      intentoData.bloqueadoHasta = Date.now() + BLOQUEO_MS;
+      intentoData.intentos = 0;
+      localStorage.setItem(viviendaKey, JSON.stringify(intentoData));
+      return showToast('Vivienda bloqueada, intenta más tarde con PIN correcto', 'error');
+    }
+
+    localStorage.setItem(viviendaKey, JSON.stringify(intentoData));
+    return showToast(err?.message || 'PIN incorrecto.', 'error');
+  }
+}
+
+    function attachEvents() {
+      blockSelect.addEventListener('change', updateDoorOptions);
+      floorSelect.addEventListener('change', updateDoorOptions);
+      $('adminBlock').addEventListener('change', updateAdminDoorOptions);
+      $('adminFloor').addEventListener('change', updateAdminDoorOptions);
+
+      reservationDateInput.addEventListener('change', () => {
+        selectedSlotISO = null;
+        selectedSlotText.textContent = 'Todavía no has elegido hora';
+        renderSlots();
+      });
+
+      $('resetSelectionBtn').addEventListener('click', clearSelection);
+      $('generateQrBtn').addEventListener('click', generateQr);
+      $('downloadQrBtn').addEventListener('click', downloadQr);
+      $('toggleAdminBtn').addEventListener('click', toggleAdminPanel);
+      $('adminLoginBtn').addEventListener('click', loginAdmin);
+      $('blockHomeBtn').addEventListener('click', blockSelectedHome);
+      $('unblockHomeBtn').addEventListener('click', unblockSelectedHome);
+
+      $('refreshBtn').addEventListener('click', async () => {
+        if (!supabaseClient) return showToast('La conexión no está disponible.', 'error');
+        await syncRemoteData();
+        showToast('Datos actualizados.');
+      });
+
+      $('confirmManageBookingBtn').addEventListener('click', cancelBookingWithPin);
+      $('closeManageBookingBtn').addEventListener('click', closeManageBookingModal);
+
+      manageBookingModal.addEventListener('click', (e) => {
+        if (e.target === manageBookingModal) closeManageBookingModal();
+      });
+
+      $('adminHotspot').addEventListener('click', handleAdminHotspotTap);
+      $('adminHotspot').addEventListener('touchstart', handleAdminHotspotTap, { passive: true });
+
+     $('bookingForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const block = blockSelect.value;
+  const floor = floorSelect.value;
+  const door = doorSelect.value;
+  const pin = homePinInput.value.trim();
+
+  const viviendaKey = `pinIntentos:${homeKey(block, floor, door)}`;
+  const MAX_INTENTOS = 3;
+  const BLOQUEO_MS = 5 * 60 * 1000; // 5 minutos
+
+  const intentoData = JSON.parse(localStorage.getItem(viviendaKey) || '{}');
+  const ahora = Date.now();
+
+  if (intentoData.bloqueadoHasta && ahora < intentoData.bloqueadoHasta) {
+    return showToast('Vivienda bloqueada, intenta más tarde con PIN correcto', 'error');
+  }
+
+  const error = validateBooking(block, floor, door, selectedSlotISO);
+
+  if (error) return showToast(error, 'error');
+
+  try {
+    await addBookingWithPin(block, floor, door, selectedSlotISO, pin);
+    localStorage.removeItem(viviendaKey);
+    showToast('Reserva confirmada. ¡Nos vemos en la pista! 🎾');
+    clearSelection();
+  } catch (err) {
+    let intentoData = JSON.parse(localStorage.getItem(viviendaKey) || '{}');
+    intentoData.intentos = (intentoData.intentos || 0) + 1;
+
+    if (intentoData.intentos >= MAX_INTENTOS) {
+      intentoData.bloqueadoHasta = Date.now() + BLOQUEO_MS;
+      intentoData.intentos = 0;
+      localStorage.setItem(viviendaKey, JSON.stringify(intentoData));
+      return showToast('Vivienda bloqueada, intenta más tarde con PIN correcto', 'error');
+    }
+
+    localStorage.setItem(viviendaKey, JSON.stringify(intentoData));
+    showToast(err?.message || 'PIN incorrecto.', 'error');
+  }
+});
+    }
+
+    async function init() {
+      initSelectors();
+      attachEvents();
+      refreshCounters();
+      renderBookings();
+      renderBlockedHomes();
+      updateNowBox();
+      setDefaultDate();
+      restoreSavedUrl();
+      applyAdminSession();
+      updateAuthorizedHomesVisibility();
+      await connectSupabase();
+
+      if (window.location.hash === '#admin') {
+        showAdminCard();
+      }
+
+      setInterval(() => {
+        updateNowBox();
+        renderSlots();
+      }, 30000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
