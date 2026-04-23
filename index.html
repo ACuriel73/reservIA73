@@ -9,7 +9,7 @@ o reutilización total o parcial del código sin autorización expresa.
 
 Este software está protegido por la legislación de propiedad intelectual.
 -->
-<!-- test logos -->
+<!-- test logos y splash -->
 <html lang="es">
 <head>
     <meta charset="UTF-8" />
@@ -27,12 +27,30 @@ Este software está protegido por la legislación de propiedad intelectual.
         linear-gradient(180deg, #eff6ff 0%, #f0fdf4 100%);
       min-height: 100vh;
     }
+
+    #splash {
+      position: fixed;
+      inset: 0;
+      background: #020617;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
+
+    #splash img {
+      width: 220px;
+      max-width: 60vw;
+      height: auto;
+    }
+
     .glass {
       backdrop-filter: blur(10px);
       background: rgba(255,255,255,0.78);
       border: 1px solid rgba(255,255,255,0.7);
       box-shadow: 0 10px 30px rgba(15,23,42,0.08);
     }
+
     .slot-btn:disabled { cursor: not-allowed; opacity: 0.55; }
     .big-emoji { font-size: clamp(2rem, 6vw, 4rem); line-height: 1; }
 
@@ -57,10 +75,10 @@ Este software está protegido por la legislación de propiedad intelectual.
   <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
 
   <!-- Apple -->
-  <link rel="apple-touch-icon" sizes="180x180" href="favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 
   <!-- Android -->
-  <link rel="icon" type="image/png" sizes="192x192" href="favicon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 
   <!-- Color navegador -->
   <meta name="theme-color" content="#0ea5e9">
@@ -71,6 +89,10 @@ Este software está protegido por la legislación de propiedad intelectual.
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="text-slate-800">
+  <!-- Splash -->
+  <div id="splash">
+    <img src="splash.png" alt="Cargando..." />
+  </div>
   <div class="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
     <header class="glass rounded-3xl p-6 md:p-8 mb-6">
       <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
@@ -1001,6 +1023,11 @@ async function cancelBookingWithPin() {
         renderSlots();
       }, 30000);
     }
+
+    window.addEventListener("load", () => {
+      const splash = document.getElementById("splash");
+      if (splash) splash.style.display = "none";
+    });
 
     init();
   </script>
