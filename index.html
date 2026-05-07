@@ -333,19 +333,27 @@
     }
 
     async function adminLogin() {
+      const adminCode = document.getElementById('adminCode')?.value.trim().toUpperCase() || null;
+      const adminUser = document.getElementById('adminUser')?.value.trim() || '';
+      const adminPass = document.getElementById('adminPass')?.value || '';
+
+      if (!adminUser || !adminPass) {
+        setMessage('err', 'Introduce usuario y contraseña de admin.');
+        renderAdminLogin();
+        return;
+      }
+
       try {
-        state.loading = true; render();
         const data = await rpc('admin_login', {
-          p_codigo_acceso: document.getElementById('adminCode')?.value.trim().toUpperCase() || null,
-          p_username: document.getElementById('adminUser')?.value.trim(),
-          p_password: document.getElementById('adminPass')?.value,
+          p_codigo_acceso: adminCode,
+          p_username: adminUser,
+          p_password: adminPass,
         });
         state.adminToken = data.token;
         localStorage.setItem('reservia73_admin_token', data.token);
-        state.loading = false;
+        setMessage('ok', 'Sesión admin iniciada.');
         renderAdminPanel();
       } catch (e) {
-        state.loading = false;
         setMessage('err', e.message);
         renderAdminLogin();
       }
