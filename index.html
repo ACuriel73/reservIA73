@@ -25,6 +25,7 @@
 
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const app = document.getElementById('app');
+    let messageTimer = null;
 
     const state = {
       comunidadCode: localStorage.getItem('reservia73_code') || '',
@@ -80,8 +81,13 @@
     }
 
     function setMessage(type, text) {
+      if (messageTimer) clearTimeout(messageTimer);
       state.message = { type, text };
       render();
+      messageTimer = setTimeout(() => {
+        state.message = null;
+        render();
+      }, 3000);
     }
 
     async function rpc(name, args) {
@@ -99,8 +105,8 @@
           </div>
           ${state.comunidad ? `<button onclick="logoutCommunity()" class="rounded-full bg-white px-3 py-2 text-xs font-bold shadow-sm ring-1 ring-slate-200">Cambiar</button>` : ''}
         </header>
-        ${state.message ? `<div class="mb-4 rounded-2xl px-4 py-3 text-sm font-semibold ${state.message.type === 'ok' ? 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200' : 'bg-rose-50 text-rose-800 ring-1 ring-rose-200'}">${esc(state.message.text)}</div>` : ''}
         ${inner}
+        ${state.message ? `<div class="fixed inset-x-0 bottom-6 z-50 mx-auto max-w-md px-4 safe-bottom"><div class="rounded-2xl px-4 py-3 text-center text-sm font-bold shadow-2xl ${state.message.type === 'ok' ? 'bg-emerald-600 text-white ring-1 ring-emerald-500' : 'bg-rose-600 text-white ring-1 ring-rose-500'}">${esc(state.message.text)}</div></div>` : ''}
       `;
     }
 
