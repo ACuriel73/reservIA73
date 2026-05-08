@@ -36,6 +36,9 @@
       reservas: [],
       selectedSlot: '',
       selectedViviendaId: '',
+      selectedBloque: '',
+      selectedPiso: '',
+      selectedPuerta: '',
       pin: '',
       loading: false,
       message: null,
@@ -129,6 +132,9 @@
         state.viviendas = viviendas || [];
         state.recurso = comunidad.recursos?.[0] || null;
         state.selectedViviendaId = '';
+        state.selectedBloque = '';
+        state.selectedPiso = '';
+        state.selectedPuerta = '';
         state.selectedSlot = '';
         localStorage.setItem('reservia73_code', code);
         state.loading = false;
@@ -160,7 +166,16 @@
       const recursos = state.comunidad.recursos || [];
       const slots = state.recurso?.horario_config?.[dayKey(state.fecha)] || [];
       const taken = new Set((state.reservas || []).map(r => r.hora));
-      const viviendasOptions = state.viviendas.map(v => `<option value="${esc(v.id)}">${esc(v.bloque)} · ${esc(v.piso)} · ${esc(v.puerta)}${v.bloqueada ? ' · BLOQUEADA' : ''}</option>`).join('');
+      const viviendasActivas = state.viviendas || [];
+      const bloques = [...new Set(viviendasActivas.map(v => v.bloque).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'es', {numeric:true}));
+      const pisos = state.selectedBloque
+        ? [...new Set(viviendasActivas.filter(v => v.bloque === state.selectedBloque).map(v => v.piso).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'es', {numeric:true}))
+        : [];
+      const puertas = state.selectedBloque && state.selectedPiso
+        ? [...new Set(viviendasActivas.filter(v => v.bloque === state.selectedBloque && v.piso === state.selectedPiso).map(v => v.puerta).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'es', {numeric:true}))
+        : [];
+      const selectedVivienda = viviendasActivas.find(v => v.id === state.selectedViviendaId);
+      const viviendaBloqueada = selectedVivienda?.bloqueada;
       const resourceSelector = recursos.length > 1 ? `
         <div class="grid grid-cols-2 gap-2">
           ${recursos.map(r => `
@@ -205,11 +220,22 @@
 
         <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
           <h3 class="font-black">Datos de la vivienda</h3>
-          <div class="mt-4 space-y-3">
-            <select onchange="state.selectedViviendaId=this.value" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100">
-              <option value="">Selecciona bloque · piso · puerta</option>
-              ${viviendasOptions}
+          <div class="mt-4 grid grid-cols-3 gap-2">
+            <select onchange="selectBloque(this.value)" class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100">
+              <option value="">Bloque</option>
+              ${bloques.map(b => `<option value="${esc(b)}" ${state.selectedBloque === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}
             </select>
+            <select onchange="selectPiso(this.value)" ${!state.selectedBloque ? 'disabled' : ''} class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100 disabled:bg-slate-100 disabled:text-slate-400">
+              <option value="">Piso</option>
+              ${pisos.map(p => `<option value="${esc(p)}" ${state.selectedPiso === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+            </select>
+            <select onchange="selectPuerta(this.value)" ${!state.selectedPiso ? 'disabled' : ''} class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100 disabled:bg-slate-100 disabled:text-slate-400">
+              <option value="">Puerta</option>
+              ${puertas.map(p => `<option value="${esc(p)}" ${state.selectedPuerta === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+            </select>
+          </div>
+          ${viviendaBloqueada ? `<div class="mt-3 rounded-2xl bg-rose-50 p-3 text-sm font-semibold text-rose-800 ring-1 ring-rose-200">Esta vivienda está bloqueada.</div>` : ''}
+          <div class="mt-3 space-y-3">
             <input id="pinInput" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-center text-2xl font-black tracking-[0.35em] outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100" oninput="state.pin=this.value.trim()" />
             <button onclick="createBooking()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20 active:scale-[0.99]">Reservar</button>
           </div>
@@ -227,6 +253,36 @@
           </div>
         </section>
       `);
+    }
+
+    function syncSelectedVivienda() {
+      const vivienda = (state.viviendas || []).find(v =>
+        v.bloque === state.selectedBloque &&
+        v.piso === state.selectedPiso &&
+        v.puerta === state.selectedPuerta
+      );
+      state.selectedViviendaId = vivienda ? vivienda.id : '';
+    }
+
+    function selectBloque(value) {
+      state.selectedBloque = value;
+      state.selectedPiso = '';
+      state.selectedPuerta = '';
+      state.selectedViviendaId = '';
+      render();
+    }
+
+    function selectPiso(value) {
+      state.selectedPiso = value;
+      state.selectedPuerta = '';
+      state.selectedViviendaId = '';
+      render();
+    }
+
+    function selectPuerta(value) {
+      state.selectedPuerta = value;
+      syncSelectedVivienda();
+      render();
     }
 
     async function selectResource(id) {
@@ -249,7 +305,7 @@
     }
 
     async function createBooking() {
-      const viviendaId = document.querySelector('select')?.value || state.selectedViviendaId;
+      const viviendaId = state.selectedViviendaId;
       const pin = document.getElementById('pinInput')?.value.trim() || state.pin;
       if (!state.recurso) return setMessage('err', 'Selecciona un recurso.');
       if (!state.selectedSlot) return setMessage('err', 'Selecciona una hora libre.');
@@ -300,6 +356,10 @@
       state.comunidad = null;
       state.comunidadCode = '';
       state.viviendas = [];
+      state.selectedViviendaId = '';
+      state.selectedBloque = '';
+      state.selectedPiso = '';
+      state.selectedPuerta = '';
       state.recurso = null;
       state.message = null;
       render();
@@ -333,45 +393,25 @@
     }
 
     async function adminLogin() {
-      const adminCode = document.getElementById('adminCode')?.value.trim().toUpperCase() || null;
-      const adminUser = document.getElementById('adminUser')?.value.trim() || '';
-      const adminPass = document.getElementById('adminPass')?.value || '';
-
-      if (!adminUser || !adminPass) {
-        setMessage('err', 'Introduce usuario y contraseña de admin.');
-        renderAdminLogin();
-        return;
-      }
-
       try {
+        state.loading = true; render();
         const data = await rpc('admin_login', {
-          p_codigo_acceso: adminCode,
-          p_username: adminUser,
-          p_password: adminPass,
+          p_codigo_acceso: document.getElementById('adminCode')?.value.trim().toUpperCase() || null,
+          p_username: document.getElementById('adminUser')?.value.trim(),
+          p_password: document.getElementById('adminPass')?.value,
         });
         state.adminToken = data.token;
-        state.admin = data;
         localStorage.setItem('reservia73_admin_token', data.token);
-        localStorage.setItem('reservia73_admin_rol', data.rol || '');
-        setMessage('ok', 'Sesión admin iniciada.');
-        if (data.rol === 'admin' && adminCode) {
-          state.comunidadCode = adminCode;
-          await loadCommunity();
-        }
+        state.loading = false;
         renderAdminPanel();
       } catch (e) {
+        state.loading = false;
         setMessage('err', e.message);
         renderAdminLogin();
       }
     }
 
     function renderAdminPanel() {
-      const isSuper = state.admin?.rol === 'superadmin' || localStorage.getItem('reservia73_admin_rol') === 'superadmin';
-      if (isSuper) return renderSuperAdminPanel();
-      return renderCommunityAdminPanel();
-    }
-
-    function renderCommunityAdminPanel() {
       const rows = state.viviendas.map(v => `
         <div class="flex items-center justify-between rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
           <div>
@@ -389,154 +429,6 @@
           <button onclick="adminLogout()" class="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 font-black text-white">Salir admin</button>
         </section>
       `);
-    }
-
-    function defaultResourceLines() {
-      return 'Pista de Pádel 1 | padel | 09:00,10:00,11:00,12:00,17:00,18:00,19:00,20:00,21:00 | 60 | 24 | 1\nSala Social | sala | 10:00,11:00,12:00,17:00,18:00,19:00 | 60 | 24 | 1';
-    }
-
-    function renderSuperAdminPanel() {
-      shell(`
-        <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
-          <h2 class="text-xl font-black">Panel superadmin</h2>
-          <p class="mt-1 text-sm text-slate-500">Crear una comunidad completa sin tocar SQL.</p>
-
-          <div class="mt-5 space-y-4">
-            <div class="grid grid-cols-1 gap-3">
-              <label class="block">
-                <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Nombre comunidad</span>
-                <input id="newCommunityName" placeholder="Ej: Residencial Sol" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Código acceso</span>
-                <input id="newCommunityCode" placeholder="Ej: SOL2026" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold uppercase" />
-              </label>
-            </div>
-
-            <label class="block">
-              <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Viviendas</span>
-              <textarea id="newHomes" rows="7" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-mono text-xs" placeholder="Bloque, Piso, Puerta, PIN">A,1,1,1234\nA,1,2,2222\nA,2,1,3333\nA,2,2,4444\nB,1,1,5555\nB,1,2,6666</textarea>
-              <p class="mt-1 text-xs text-slate-500">Una vivienda por línea: <b>Bloque, Piso, Puerta, PIN</b></p>
-            </label>
-
-            <label class="block">
-              <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Recursos</span>
-              <textarea id="newResources" rows="6" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-mono text-xs">${esc(defaultResourceLines())}</textarea>
-              <p class="mt-1 text-xs text-slate-500">Una línea por recurso: <b>Nombre | tipo | horas | duración | antelación | límite</b>. Tipos: padel, tenis, sala, gimnasio, piscina, barbacoa, otro.</p>
-            </label>
-
-            <div class="grid grid-cols-1 gap-3 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
-              <div class="text-sm font-black">Admin inicial de la comunidad</div>
-              <input id="newAdminUser" value="admin" placeholder="Usuario admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
-              <input id="newAdminPass" value="Admin2026" type="text" placeholder="Contraseña admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
-            </div>
-
-            <button onclick="superCreateCommunity()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20 active:scale-[0.99]">Crear comunidad completa</button>
-            <button onclick="adminLogout()" class="w-full rounded-2xl bg-white px-4 py-3 font-bold ring-1 ring-slate-200">Salir superadmin</button>
-          </div>
-        </section>
-      `);
-    }
-
-    function buildHorarioConfig(hoursText) {
-      const horas = hoursText.split(',').map(x => x.trim()).filter(Boolean);
-      const dias = ['lunes','martes','miercoles','jueves','viernes','sabado','domingo'];
-      return Object.fromEntries(dias.map(d => [d, horas]));
-    }
-
-    function parseHomes(text) {
-      return text.split('\n').map((line, i) => {
-        const clean = line.trim();
-        if (!clean) return null;
-        const parts = clean.split(',').map(x => x.trim());
-        if (parts.length < 4) throw new Error(`Vivienda línea ${i + 1}: usa Bloque, Piso, Puerta, PIN.`);
-        return { bloque: parts[0], piso: parts[1], puerta: parts[2], pin: parts.slice(3).join(',').trim() };
-      }).filter(Boolean);
-    }
-
-    function parseResources(text) {
-      return text.split('\n').map((line, i) => {
-        const clean = line.trim();
-        if (!clean) return null;
-        const parts = clean.split('|').map(x => x.trim());
-        if (parts.length < 3) throw new Error(`Recurso línea ${i + 1}: usa Nombre | tipo | horas | duración | antelación | límite.`);
-        return {
-          nombre: parts[0],
-          tipo: parts[1] || 'otro',
-          horario_config: buildHorarioConfig(parts[2]),
-          duracion: Number(parts[3] || 60),
-          antelacion: Number(parts[4] || 24),
-          limite: Number(parts[5] || 1),
-        };
-      }).filter(Boolean);
-    }
-
-    async function superCreateCommunity() {
-      const nombre = document.getElementById('newCommunityName')?.value.trim() || '';
-      const codigo = document.getElementById('newCommunityCode')?.value.trim().toUpperCase() || '';
-      const adminUser = document.getElementById('newAdminUser')?.value.trim() || 'admin';
-      const adminPass = document.getElementById('newAdminPass')?.value || '';
-      let homes, resources;
-
-      try {
-        if (!nombre || !codigo) throw new Error('Introduce nombre y código de comunidad.');
-        if (!adminUser || !adminPass) throw new Error('Introduce usuario y contraseña del admin inicial.');
-        homes = parseHomes(document.getElementById('newHomes')?.value || '');
-        resources = parseResources(document.getElementById('newResources')?.value || '');
-        if (!homes.length) throw new Error('Añade al menos una vivienda.');
-        if (!resources.length) throw new Error('Añade al menos un recurso.');
-
-        state.loading = true; render();
-        const created = await rpc('admin_crear_comunidad', {
-          p_token: state.adminToken,
-          p_nombre: nombre,
-          p_codigo_acceso: codigo,
-          p_timezone: 'Europe/Madrid',
-        });
-        const comunidadId = created.comunidad_id;
-
-        for (const h of homes) {
-          await rpc('admin_crear_vivienda', {
-            p_token: state.adminToken,
-            p_comunidad_id: comunidadId,
-            p_bloque: h.bloque,
-            p_piso: h.piso,
-            p_puerta: h.puerta,
-            p_pin: h.pin,
-          });
-        }
-
-        for (const r of resources) {
-          await rpc('admin_crear_recurso', {
-            p_token: state.adminToken,
-            p_comunidad_id: comunidadId,
-            p_nombre: r.nombre,
-            p_tipo: r.tipo,
-            p_duracion_minutos: r.duracion,
-            p_antelacion_horas: r.antelacion,
-            p_max_reservas_dia_por_vivienda: r.limite,
-            p_horario_config: r.horario_config,
-          });
-        }
-
-        await rpc('admin_crear_admin_comunidad', {
-          p_token: state.adminToken,
-          p_comunidad_id: comunidadId,
-          p_username: adminUser,
-          p_password: adminPass,
-          p_rol: 'admin',
-        });
-
-        state.loading = false;
-        state.comunidadCode = codigo;
-        localStorage.setItem('reservia73_code', codigo);
-        await loadCommunity();
-        setMessage('ok', `Comunidad ${codigo} creada correctamente.`);
-      } catch (e) {
-        state.loading = false;
-        setMessage('err', e.message);
-        renderSuperAdminPanel();
-      }
     }
 
     async function adminToggleHome(viviendaId, bloquear) {
@@ -560,9 +452,7 @@
 
     function adminLogout() {
       localStorage.removeItem('reservia73_admin_token');
-      localStorage.removeItem('reservia73_admin_rol');
       state.adminToken = '';
-      state.admin = null;
       render();
     }
 
@@ -574,8 +464,9 @@
     window.createBooking = createBooking;
     window.openCancel = openCancel;
     window.adminLogin = adminLogin;
-    window.renderAdminPanel = renderAdminPanel;
-    window.superCreateCommunity = superCreateCommunity;
+    window.selectBloque = selectBloque;
+    window.selectPiso = selectPiso;
+    window.selectPuerta = selectPuerta;
     window.adminToggleHome = adminToggleHome;
     window.adminLogout = adminLogout;
     window.render = render;
