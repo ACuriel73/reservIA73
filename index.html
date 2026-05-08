@@ -36,6 +36,9 @@
       reservas: [],
       selectedSlot: '',
       selectedViviendaId: '',
+      selectedBloque: '',
+      selectedPiso: '',
+      selectedPuerta: '',
       pin: '',
       loading: false,
       message: null,
@@ -131,6 +134,9 @@
         state.viviendas = viviendas || [];
         state.recurso = comunidad.recursos?.[0] || null;
         state.selectedViviendaId = '';
+        state.selectedBloque = '';
+        state.selectedPiso = '';
+        state.selectedPuerta = '';
         state.selectedSlot = '';
         localStorage.setItem('reservia73_code', code);
         state.loading = false;
@@ -162,7 +168,13 @@
       const recursos = state.comunidad.recursos || [];
       const slots = state.recurso?.horario_config?.[dayKey(state.fecha)] || [];
       const taken = new Set((state.reservas || []).map(r => r.hora));
-      const viviendasOptions = state.viviendas.map(v => `<option value="${esc(v.id)}">${esc(v.bloque)} · ${esc(v.piso)} · ${esc(v.puerta)}${v.bloqueada ? ' · BLOQUEADA' : ''}</option>`).join('');
+      const selectedBloque = state.selectedBloque || '';
+      const selectedPiso = state.selectedPiso || '';
+      const selectedPuerta = state.selectedPuerta || '';
+      const bloques = uniqueValues(state.viviendas, 'bloque');
+      const pisos = uniqueValues(state.viviendas.filter(v => !selectedBloque || v.bloque === selectedBloque), 'piso');
+      const puertas = uniqueValues(state.viviendas.filter(v => (!selectedBloque || v.bloque === selectedBloque) && (!selectedPiso || v.piso === selectedPiso)), 'puerta');
+      const viviendaActual = findSelectedHome();
       const resourceSelector = recursos.length > 1 ? `
         <div class="grid grid-cols-2 gap-2">
           ${recursos.map(r => `
@@ -208,10 +220,30 @@
         <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
           <h3 class="font-black">Datos de la vivienda</h3>
           <div class="mt-4 space-y-3">
-            <select onchange="state.selectedViviendaId=this.value" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100">
-              <option value="">Selecciona bloque · piso · puerta</option>
-              ${viviendasOptions}
-            </select>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label class="block">
+                <span class="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Bloque</span>
+                <select onchange="selectHomePart('bloque', this.value)" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100">
+                  <option value="">Bloque</option>
+                  ${bloques.map(b => `<option value="${esc(b)}" ${b === selectedBloque ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Piso</span>
+                <select onchange="selectHomePart('piso', this.value)" ${!selectedBloque ? 'disabled' : ''} class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100 disabled:bg-slate-100 disabled:text-slate-400">
+                  <option value="">Piso</option>
+                  ${pisos.map(p => `<option value="${esc(p)}" ${p === selectedPiso ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Puerta</span>
+                <select onchange="selectHomePart('puerta', this.value)" ${!selectedBloque || !selectedPiso ? 'disabled' : ''} class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100 disabled:bg-slate-100 disabled:text-slate-400">
+                  <option value="">Puerta</option>
+                  ${puertas.map(p => `<option value="${esc(p)}" ${p === selectedPuerta ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+                </select>
+              </label>
+            </div>
+            ${viviendaActual?.bloqueada ? `<div class="rounded-2xl bg-rose-50 p-3 text-sm font-bold text-rose-700 ring-1 ring-rose-200">Esta vivienda está bloqueada.</div>` : ''}
             <input id="pinInput" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-center text-2xl font-black tracking-[0.35em] outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100" oninput="state.pin=this.value.trim()" />
             <button onclick="createBooking()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20 active:scale-[0.99]">Reservar</button>
           </div>
@@ -250,12 +282,46 @@
       render();
     }
 
+    function uniqueValues(items, key) {
+      return [...new Set((items || []).map(item => item?.[key]).filter(v => v !== undefined && v !== null && String(v).trim() !== ''))]
+        .sort((a, b) => String(a).localeCompare(String(b), 'es', { numeric: true, sensitivity: 'base' }));
+    }
+
+    function findSelectedHome() {
+      if (!state.selectedBloque || !state.selectedPiso || !state.selectedPuerta) return null;
+      return (state.viviendas || []).find(v =>
+        v.bloque === state.selectedBloque &&
+        v.piso === state.selectedPiso &&
+        v.puerta === state.selectedPuerta
+      ) || null;
+    }
+
+    function selectHomePart(part, value) {
+      if (part === 'bloque') {
+        state.selectedBloque = value;
+        state.selectedPiso = '';
+        state.selectedPuerta = '';
+      }
+      if (part === 'piso') {
+        state.selectedPiso = value;
+        state.selectedPuerta = '';
+      }
+      if (part === 'puerta') {
+        state.selectedPuerta = value;
+      }
+      const home = findSelectedHome();
+      state.selectedViviendaId = home?.id || '';
+      state.message = null;
+      render();
+    }
+
     async function createBooking() {
-      const viviendaId = document.querySelector('select')?.value || state.selectedViviendaId;
+      const home = findSelectedHome();
+      const viviendaId = home?.id || state.selectedViviendaId;
       const pin = document.getElementById('pinInput')?.value.trim() || state.pin;
       if (!state.recurso) return setMessage('err', 'Selecciona un recurso.');
       if (!state.selectedSlot) return setMessage('err', 'Selecciona una hora libre.');
-      if (!viviendaId) return setMessage('err', 'Selecciona tu vivienda.');
+      if (!viviendaId) return setMessage('err', 'Selecciona bloque, piso y puerta.');
       if (!pin) return setMessage('err', 'Introduce el PIN.');
       try {
         state.loading = true; render();
@@ -302,6 +368,10 @@
       state.comunidad = null;
       state.comunidadCode = '';
       state.viviendas = [];
+      state.selectedViviendaId = '';
+      state.selectedBloque = '';
+      state.selectedPiso = '';
+      state.selectedPuerta = '';
       state.recurso = null;
       state.message = null;
       render();
