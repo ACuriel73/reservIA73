@@ -1,0 +1,1185 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>ReservIA73</title>
+  <meta name="theme-color" content="#0f766e" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root { color-scheme: light; }
+    body { -webkit-tap-highlight-color: transparent; }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+    .card { background: rgba(255,255,255,.92); backdrop-filter: blur(10px); }
+    .hidden-soft { display: none !important; }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-teal-50 via-white to-sky-50 text-slate-900">
+  <div id="app" class="mx-auto max-w-md min-h-screen px-4 py-5 safe-bottom"></div>
+
+  <button id="adminHotspot" aria-label="admin" class="fixed bottom-0 right-0 h-16 w-16 opacity-0">Admin</button>
+
+  <script>
+    const SUPABASE_URL = 'https://fktkybjzqsahoklernqe.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrdGt5Ymp6cXNhaG9rbGVybnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMDk1NTksImV4cCI6MjA5MzY4NTU1OX0.EMAR6RC8waEC7PM8clCyM-zxN07UK2Gj0PguRBQiWYE';
+
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const app = document.getElementById('app');
+
+    const state = {
+      comunidadCode: localStorage.getItem('reservia73_code') || '',
+      comunidad: null,
+      viviendas: [],
+      recurso: null,
+      fecha: toISODate(new Date()),
+      reservas: [],
+      selectedSlot: '',
+      selectedViviendaId: '',
+      selectedBloque: '',
+      selectedPiso: '',
+      selectedPuerta: '',
+      pin: '',
+      loading: false,
+      message: null,
+      adminToken: localStorage.getItem('reservia73_admin_token') || '',
+      admin: null,
+      adminCommunities: [],
+      adminEditingCommunity: null,
+      adminTapCount: 0,
+    };
+
+    function toISODate(d) {
+      const tzOffset = d.getTimezoneOffset() * 60000;
+      return new Date(d - tzOffset).toISOString().slice(0, 10);
+    }
+
+    function dayKey(dateStr) {
+      const d = new Date(dateStr + 'T12:00:00');
+      return ['domingo','lunes','martes','miercoles','jueves','viernes','sabado'][d.getDay()];
+    }
+
+    function slotStatus(slot) {
+      const [hour, minute] = slot.split(':').map(Number);
+      const slotDate = new Date(`${state.fecha}T${String(hour).padStart(2, '0')}:${String(minute || 0).padStart(2, '0')}:00`);
+      const now = new Date();
+      const maxHours = Number(state.recurso?.antelacion_horas ?? 24);
+      const maxDate = new Date(now.getTime() + maxHours * 60 * 60 * 1000);
+      if (slotDate <= now) return 'out';
+      if (slotDate > maxDate) return 'out';
+      return 'available';
+    }
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
+    }
+
+    function normalizeError(error) {
+      if (!error) return 'Ha ocurrido un error.';
+      const msg = error.message || String(error);
+      return msg.replace(/^Error:\s*/i, '').replace(/^PGRST\d+:\s*/i, '');
+    }
+
+    function setMessage(type, text) {
+      state.message = { type, text };
+      render();
+    }
+
+    async function rpc(name, args) {
+      const { data, error } = await sb.rpc(name, args);
+      if (error) throw new Error(normalizeError(error));
+      return data;
+    }
+
+    function shell(inner) {
+      app.innerHTML = `
+        <header class="mb-5 flex items-center justify-between">
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-[0.25em] text-teal-700">ReservIA73</div>
+            <h1 class="mt-1 text-2xl font-black tracking-tight">Reservas comunitarias</h1>
+          </div>
+          ${state.comunidad ? `<button onclick="logoutCommunity()" class="rounded-full bg-white px-3 py-2 text-xs font-bold shadow-sm ring-1 ring-slate-200">Cambiar</button>` : ''}
+        </header>
+        ${state.message ? `<div class="mb-4 rounded-2xl px-4 py-3 text-sm font-semibold ${state.message.type === 'ok' ? 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200' : 'bg-rose-50 text-rose-800 ring-1 ring-rose-200'}">${esc(state.message.text)}</div>` : ''}
+        ${inner}
+      `;
+    }
+
+    function render() {
+      if (state.loading) return shell(`
+        <section class="card rounded-3xl p-6 shadow-xl ring-1 ring-slate-200">
+          <div class="flex items-center gap-3">
+            <div class="h-5 w-5 animate-spin rounded-full border-2 border-teal-700 border-t-transparent"></div>
+            <p class="font-semibold text-slate-700">Cargando...</p>
+          </div>
+        </section>
+      `);
+      if (!state.comunidad) return renderCommunityLogin();
+      return renderBooking();
+    }
+
+    function renderCommunityLogin() {
+      shell(`
+        <section class="card rounded-3xl p-6 shadow-xl ring-1 ring-slate-200">
+          <h2 class="text-xl font-black">Código de comunidad</h2>
+          <p class="mt-2 text-sm leading-6 text-slate-600">Introduce el código facilitado por tu comunidad para cargar sus viviendas, recursos y horarios.</p>
+          <form onsubmit="loadCommunity(event)" class="mt-5 space-y-4">
+            <input id="communityCode" value="${esc(state.comunidadCode)}" autocomplete="off" placeholder="Ej: TEST1" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-center text-xl font-black uppercase tracking-widest outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100" />
+            <button class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20 active:scale-[0.99]">Entrar</button>
+          </form>
+          <p class="mt-4 text-center text-xs text-slate-500">Para pruebas: <b>TEST1</b></p>
+        </section>
+      `);
+    }
+
+    async function loadCommunity(event) {
+      event?.preventDefault();
+      const code = (document.getElementById('communityCode')?.value || state.comunidadCode || '').trim().toUpperCase();
+      if (!code) return setMessage('err', 'Introduce el código de comunidad.');
+      try {
+        state.loading = true; state.message = null; render();
+        const comunidad = await rpc('app_resolver_comunidad', { p_codigo_acceso: code });
+        const viviendas = await rpc('app_listar_viviendas', { p_codigo_acceso: code });
+        state.comunidadCode = code;
+        state.comunidad = comunidad;
+        state.viviendas = viviendas || [];
+        state.recurso = comunidad.recursos?.[0] || null;
+        state.selectedViviendaId = '';
+        state.selectedBloque = '';
+        state.selectedPiso = '';
+        state.selectedPuerta = '';
+        state.selectedSlot = '';
+        localStorage.setItem('reservia73_code', code);
+        state.loading = false;
+        await loadReservations();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+      }
+    }
+
+    async function loadReservations() {
+      if (!state.comunidad || !state.recurso || !state.fecha) return render();
+      try {
+        state.loading = true; render();
+        state.reservas = await rpc('app_listar_reservas_dia', {
+          p_codigo_acceso: state.comunidadCode,
+          p_recurso_id: state.recurso.id,
+          p_fecha: state.fecha,
+        });
+        state.loading = false;
+        render();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+      }
+    }
+
+    function renderBooking() {
+      const recursos = state.comunidad.recursos || [];
+      const slots = state.recurso?.horario_config?.[dayKey(state.fecha)] || [];
+      const taken = new Set((state.reservas || []).map(r => r.hora));
+      const selectedBloque = state.selectedBloque || '';
+      const selectedPiso = state.selectedPiso || '';
+      const selectedPuerta = state.selectedPuerta || '';
+      const bloques = uniqueValues(state.viviendas, 'bloque');
+      const pisos = uniqueValues(state.viviendas.filter(v => !selectedBloque || v.bloque === selectedBloque), 'piso');
+      const puertas = uniqueValues(state.viviendas.filter(v => (!selectedBloque || v.bloque === selectedBloque) && (!selectedPiso || v.piso === selectedPiso)), 'puerta');
+      const viviendaActual = findSelectedHome();
+      const resourceSelector = recursos.length > 1 ? `
+        <div class="grid grid-cols-2 gap-2">
+          ${recursos.map(r => `
+            <button onclick="selectResource('${esc(r.id)}')" class="rounded-2xl px-3 py-3 text-left font-bold ring-1 ${state.recurso?.id === r.id ? 'bg-teal-700 text-white ring-teal-700' : 'bg-white text-slate-800 ring-slate-200'}">
+              <div class="text-xl">${esc(r.icono)}</div>
+              <div class="mt-1 text-sm">${esc(r.nombre)}</div>
+            </button>
+          `).join('')}
+        </div>` : '';
+
+      shell(`
+        <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <div class="mb-4">
+            <h2 class="text-xl font-black">${esc(state.comunidad.nombre)}</h2>
+            <p class="text-sm text-slate-500">Código ${esc(state.comunidad.codigo_acceso)}</p>
+          </div>
+
+          ${resourceSelector}
+
+          <div class="mt-5 grid grid-cols-1 gap-4">
+            <label class="block">
+              <span class="mb-2 block text-sm font-bold text-slate-700">Fecha</span>
+              <input type="date" value="${esc(state.fecha)}" min="${toISODate(new Date())}" onchange="changeDate(this.value)" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100" />
+            </label>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="font-black">${esc(state.recurso?.icono || '📅')} ${esc(state.recurso?.nombre || 'Recurso')}</h3>
+            <button onclick="loadReservations()" class="rounded-full bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700">Actualizar</button>
+          </div>
+          <p class="mt-1 text-xs text-slate-500">Duración: ${esc(state.recurso?.duracion_minutos || 60)} min · Antelación máxima: ${esc(state.recurso?.antelacion_horas || 24)} h</p>
+          <div class="mt-4 grid grid-cols-3 gap-2">
+            ${slots.length ? slots.map(slot => {
+              const isTaken = taken.has(slot);
+              const isSel = state.selectedSlot === slot;
+              const status = slotStatus(slot);
+              const disabled = isTaken || status === 'out';
+              const cls = isTaken
+                ? 'bg-rose-100 text-rose-700 ring-rose-200 line-through'
+                : status === 'out'
+                  ? 'bg-transparent text-slate-400 ring-slate-200 opacity-60'
+                  : isSel
+                    ? 'bg-teal-800 text-white ring-teal-800'
+                    : 'bg-emerald-100 text-emerald-800 ring-emerald-300';
+              const title = isTaken ? 'Ocupada' : status === 'out' ? 'Fuera de la antelación máxima' : 'Disponible';
+              return `<button ${disabled ? 'disabled' : ''} title="${title}" onclick="selectSlot('${esc(slot)}')" class="rounded-2xl px-2 py-3 text-sm font-black ring-1 ${cls}">${esc(slot)}</button>`;
+            }).join('') : `<div class="col-span-3 rounded-2xl bg-amber-50 p-4 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">No hay horarios configurados para este día.</div>`}
+          </div>
+          <div class="mt-3 grid grid-cols-3 gap-2 text-center text-[11px] font-bold text-slate-500">
+            <div><span class="inline-block h-3 w-3 rounded-full bg-emerald-100 ring-1 ring-emerald-300"></span> Libre</div>
+            <div><span class="inline-block h-3 w-3 rounded-full bg-rose-100 ring-1 ring-rose-300"></span> Ocupada</div>
+            <div><span class="inline-block h-3 w-3 rounded-full bg-transparent ring-1 ring-slate-300"></span> No reservable</div>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Datos de la vivienda</h3>
+          <div class="mt-4 space-y-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label class="block">
+                <span class="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Bloque</span>
+                <select onchange="selectHomePart('bloque', this.value)" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100">
+                  <option value="">Bloque</option>
+                  ${bloques.map(b => `<option value="${esc(b)}" ${b === selectedBloque ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Piso</span>
+                <select onchange="selectHomePart('piso', this.value)" ${!selectedBloque ? 'disabled' : ''} class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100 disabled:bg-slate-100 disabled:text-slate-400">
+                  <option value="">Piso</option>
+                  ${pisos.map(p => `<option value="${esc(p)}" ${p === selectedPiso ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Puerta</span>
+                <select onchange="selectHomePart('puerta', this.value)" ${!selectedBloque || !selectedPiso ? 'disabled' : ''} class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100 disabled:bg-slate-100 disabled:text-slate-400">
+                  <option value="">Puerta</option>
+                  ${puertas.map(p => `<option value="${esc(p)}" ${p === selectedPuerta ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+                </select>
+              </label>
+            </div>
+            ${viviendaActual?.bloqueada ? `<div class="rounded-2xl bg-rose-50 p-3 text-sm font-bold text-rose-700 ring-1 ring-rose-200">Esta vivienda está bloqueada.</div>` : ''}
+            <input id="pinInput" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-center text-2xl font-black tracking-[0.35em] outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100" oninput="state.pin=this.value.trim()" />
+            <button onclick="createBooking()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20 active:scale-[0.99]">Reservar</button>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Reservas del día</h3>
+          <div class="mt-3 space-y-2">
+            ${(state.reservas || []).length ? state.reservas.map(r => `
+              <div class="flex items-center justify-between rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                <div class="font-black">${esc(r.hora)}</div>
+                <button onclick="openCancel('${esc(r.id)}','${esc(r.hora)}')" class="rounded-full bg-white px-3 py-2 text-xs font-bold text-rose-700 ring-1 ring-rose-200">Cancelar</button>
+              </div>
+            `).join('') : `<p class="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No hay reservas activas para este día.</p>`}
+          </div>
+        </section>
+      `);
+    }
+
+    async function selectResource(id) {
+      state.recurso = (state.comunidad.recursos || []).find(r => r.id === id) || state.recurso;
+      state.selectedSlot = '';
+      state.reservas = [];
+      await loadReservations();
+    }
+
+    async function changeDate(value) {
+      state.fecha = value;
+      state.selectedSlot = '';
+      await loadReservations();
+    }
+
+    function selectSlot(slot) {
+      if (slotStatus(slot) === 'out') return setMessage('err', 'Esa hora está fuera de la antelación máxima permitida.');
+      state.selectedSlot = slot;
+      state.message = null;
+      render();
+    }
+
+    function uniqueValues(items, key) {
+      return [...new Set((items || []).map(item => item?.[key]).filter(v => v !== undefined && v !== null && String(v).trim() !== ''))]
+        .sort((a, b) => String(a).localeCompare(String(b), 'es', { numeric: true, sensitivity: 'base' }));
+    }
+
+    function findSelectedHome() {
+      if (!state.selectedBloque || !state.selectedPiso || !state.selectedPuerta) return null;
+      return (state.viviendas || []).find(v =>
+        v.bloque === state.selectedBloque &&
+        v.piso === state.selectedPiso &&
+        v.puerta === state.selectedPuerta
+      ) || null;
+    }
+
+    function selectHomePart(part, value) {
+      if (part === 'bloque') {
+        state.selectedBloque = value;
+        state.selectedPiso = '';
+        state.selectedPuerta = '';
+      }
+      if (part === 'piso') {
+        state.selectedPiso = value;
+        state.selectedPuerta = '';
+      }
+      if (part === 'puerta') {
+        state.selectedPuerta = value;
+      }
+      const home = findSelectedHome();
+      state.selectedViviendaId = home?.id || '';
+      state.message = null;
+      render();
+    }
+
+    async function createBooking() {
+      const home = findSelectedHome();
+      const viviendaId = home?.id || state.selectedViviendaId;
+      const pin = document.getElementById('pinInput')?.value.trim() || state.pin;
+      if (!state.recurso) return setMessage('err', 'Selecciona un recurso.');
+      if (!state.selectedSlot) return setMessage('err', 'Selecciona una hora libre.');
+      if (!viviendaId) return setMessage('err', 'Selecciona bloque, piso y puerta.');
+      if (!pin) return setMessage('err', 'Introduce el PIN.');
+      try {
+        state.loading = true; render();
+        await rpc('app_crear_reserva', {
+          p_codigo_acceso: state.comunidadCode,
+          p_recurso_id: state.recurso.id,
+          p_vivienda_id: viviendaId,
+          p_fecha: state.fecha,
+          p_hora: state.selectedSlot,
+          p_pin: pin,
+        });
+        state.selectedSlot = '';
+        state.pin = '';
+        state.loading = false;
+        await loadReservations();
+        setMessage('ok', 'Reserva creada correctamente.');
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+      }
+    }
+
+    async function openCancel(reservaId, hora) {
+      const pin = prompt(`Introduce el PIN para cancelar la reserva de las ${hora}`);
+      if (!pin) return;
+      try {
+        state.loading = true; render();
+        await rpc('app_cancelar_reserva', {
+          p_codigo_acceso: state.comunidadCode,
+          p_reserva_id: reservaId,
+          p_pin: pin.trim(),
+        });
+        state.loading = false;
+        await loadReservations();
+        setMessage('ok', 'Reserva cancelada correctamente.');
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+      }
+    }
+
+    function logoutCommunity() {
+      localStorage.removeItem('reservia73_code');
+      state.comunidad = null;
+      state.comunidadCode = '';
+      state.viviendas = [];
+      state.selectedViviendaId = '';
+      state.selectedBloque = '';
+      state.selectedPiso = '';
+      state.selectedPuerta = '';
+      state.recurso = null;
+      state.message = null;
+      render();
+    }
+
+    // Admin por triple tap abajo a la derecha.
+    document.getElementById('adminHotspot').addEventListener('click', () => {
+      state.adminTapCount++;
+      setTimeout(() => state.adminTapCount = 0, 1200);
+      if (state.adminTapCount >= 3) {
+        state.adminTapCount = 0;
+        renderAdminLogin();
+      }
+    });
+
+    function renderAdminLogin() {
+      shell(`
+        <section class="card rounded-3xl p-6 shadow-xl ring-1 ring-slate-200">
+          <h2 class="text-xl font-black">Acceso admin</h2>
+          <p class="mt-2 text-sm text-slate-600">Usa el código de comunidad para admin normal. Para superadmin puedes dejarlo vacío.</p>
+          <div class="mt-5 space-y-3">
+            <input id="adminCode" value="${esc(state.comunidadCode)}" placeholder="Código comunidad" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold uppercase" />
+            <input id="adminUser" placeholder="Usuario" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            <input id="adminPass" type="password" placeholder="Contraseña" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            <button onclick="adminLogin()" class="w-full rounded-2xl bg-slate-900 px-4 py-4 font-black text-white">Entrar</button>
+            <button onclick="render()" class="w-full rounded-2xl bg-white px-4 py-3 font-bold ring-1 ring-slate-200">Volver</button>
+          </div>
+          <p class="mt-4 text-xs text-slate-500">Prueba: admin / Admin2026 o superadmin / Super2026</p>
+        </section>
+      `);
+    }
+
+    async function adminLogin() {
+      const adminCodeRaw = document.getElementById('adminCode')?.value.trim().toUpperCase() || '';
+      const adminCode = adminCodeRaw || null;
+      const adminUser = document.getElementById('adminUser')?.value.trim() || '';
+      const adminPass = document.getElementById('adminPass')?.value || '';
+
+      if (!adminUser || !adminPass) {
+        setMessage('err', 'Introduce usuario y contraseña de admin.');
+        renderAdminLogin();
+        return;
+      }
+
+      try {
+        state.loading = true; state.message = null; render();
+        const data = await rpc('admin_login', {
+          p_codigo_acceso: adminCode,
+          p_username: adminUser,
+          p_password: adminPass,
+        });
+        state.adminToken = data.token;
+        state.admin = data;
+        localStorage.setItem('reservia73_admin_token', data.token);
+        state.loading = false;
+        if (data.rol === 'superadmin') {
+          await loadAdminCommunities();
+          renderSuperAdminPanel();
+        } else {
+          setMessage('ok', 'Sesión admin iniciada.');
+          renderCommunityAdminPanel();
+        }
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderAdminLogin();
+      }
+    }
+
+    async function loadAdminCommunities() {
+      state.adminCommunities = await rpc('admin_listar_comunidades', { p_token: state.adminToken }) || [];
+    }
+
+    function defaultResourceLines() {
+      return `Pista de Pádel 1 | padel | 09:00,10:00,11:00,12:00,17:00,18:00,19:00,20:00,21:00 | 60 | 24 | 1\nSala Social | sala | 10:00,11:00,12:00,17:00,18:00,19:00 | 60 | 24 | 1`;
+    }
+
+    function renderSuperAdminPanel() {
+      const communities = state.adminCommunities || [];
+      shell(`
+        <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-black">Panel superadmin</h2>
+              <p class="mt-1 text-sm text-slate-500">Crear, visualizar, editar y eliminar comunidades de ReservIA73.</p>
+            </div>
+            <button onclick="adminLogout()" class="rounded-full bg-slate-900 px-3 py-2 text-xs font-black text-white">Salir</button>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Seguridad superadmin</h3>
+          <p class="mt-1 text-xs text-slate-500">Cambia la contraseña del superadmin conectado. Debe tener al menos 8 caracteres.</p>
+          <div class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input id="superPass1" type="password" placeholder="Nueva contraseña superadmin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            <input id="superPass2" type="password" placeholder="Repetir contraseña" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+          </div>
+          <button onclick="changeMyAdminPassword()" class="mt-3 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white">Cambiar contraseña superadmin</button>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Comunidades</h3>
+          <button onclick="refreshSuperAdmin()" class="mt-3 w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold ring-1 ring-slate-200">Actualizar listado</button>
+          <div class="mt-4 space-y-2">
+            ${communities.length ? communities.map(c => `
+              <div class="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="font-black">${esc(c.nombre)}</div>
+                    <div class="mt-1 text-xs font-bold text-teal-700">Código: ${esc(c.codigo_acceso)} · ${c.activa ? 'Activa' : 'Inactiva'}</div>
+                    <div class="mt-1 text-xs text-slate-500">${esc(c.viviendas_count)} viviendas · ${esc(c.recursos_count)} recursos · ${esc(c.reservas_activas_count)} reservas activas</div>
+                  </div>
+                  <div class="flex shrink-0 flex-col gap-2">
+                    <button onclick="openCommunityEditor('${esc(c.id)}')" class="rounded-full bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Ver / editar</button>
+                    <button onclick="deleteCommunity('${esc(c.id)}','${esc(c.codigo_acceso)}','${esc(c.nombre)}')" class="rounded-full bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 ring-1 ring-rose-200">Eliminar</button>
+                  </div>
+                </div>
+              </div>
+            `).join('') : `<p class="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No hay comunidades todavía.</p>`}
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Crear comunidad</h3>
+          <p class="mt-1 text-xs text-slate-500">Crea la comunidad, sus viviendas, recursos y admin inicial en una sola operación.</p>
+          <div class="mt-4 space-y-3">
+            <input id="newComName" placeholder="Nombre comunidad. Ej: Residencial Sol" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            <input id="newComCode" placeholder="Código acceso. Ej: SOL2026" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold uppercase" />
+            <div class="grid grid-cols-2 gap-2">
+              <input id="newAdminUser" value="admin" placeholder="Usuario admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+              <input id="newAdminPass" value="Admin2026" placeholder="Contraseña admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            </div>
+            <label class="block">
+              <span class="mb-2 block text-sm font-bold text-slate-700">Viviendas: bloque,piso,puerta,pin</span>
+              <textarea id="newHomes" rows="6" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-mono" placeholder="A,1,1,1234\nA,1,2,2222\nB,2,1,3333"></textarea>
+            </label>
+            <label class="block">
+              <span class="mb-2 block text-sm font-bold text-slate-700">Recursos</span>
+              <textarea id="newResources" rows="7" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-xs font-mono">${esc(defaultResourceLines())}</textarea>
+              <p class="mt-2 text-xs text-slate-500">Formato: Nombre | tipo | horas | duración | antelación | límite diario</p>
+            </label>
+            <button onclick="createFullCommunity()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20">Crear comunidad completa</button>
+          </div>
+        </section>
+      `);
+    }
+
+    function hoursFromSchedule(schedule) {
+      const days = ['lunes','martes','miercoles','jueves','viernes','sabado','domingo'];
+      for (const d of days) {
+        if (Array.isArray(schedule?.[d])) return schedule[d].join(',');
+      }
+      return '';
+    }
+
+    function renderCommunityEditor() {
+      const detail = state.adminEditingCommunity;
+      if (!detail) return renderSuperAdminPanel();
+      const c = detail.comunidad;
+      const viviendas = detail.viviendas || [];
+      const recursos = detail.recursos || [];
+      const admins = detail.admins || [];
+      shell(`
+        <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-black">Editar comunidad</h2>
+              <p class="mt-1 text-sm text-slate-500">${esc(c.nombre)} · ${esc(c.codigo_acceso)}</p>
+            </div>
+            <button onclick="backToSuperAdminList()" class="rounded-full bg-white px-3 py-2 text-xs font-black ring-1 ring-slate-200">Volver</button>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Datos básicos</h3>
+          <div class="mt-4 space-y-3">
+            <input id="editComName" value="${esc(c.nombre)}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            <input id="editComCode" value="${esc(c.codigo_acceso)}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold uppercase" />
+            <input id="editComTimezone" value="${esc(c.timezone || 'Europe/Madrid')}" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            <label class="flex items-center gap-3 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+              <input id="editComActive" type="checkbox" ${c.activa ? 'checked' : ''} class="h-5 w-5" />
+              <span class="font-bold">Comunidad activa</span>
+            </label>
+            <button onclick="saveCommunityBasic()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white">Guardar datos básicos</button>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Viviendas</h3>
+          <div class="mt-4 space-y-3">
+            ${viviendas.map(v => `
+              <div class="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                <div class="grid grid-cols-3 gap-2">
+                  <input id="homeBloque_${esc(v.id)}" value="${esc(v.bloque)}" class="rounded-xl border border-slate-200 px-3 py-2 font-bold" />
+                  <input id="homePiso_${esc(v.id)}" value="${esc(v.piso)}" class="rounded-xl border border-slate-200 px-3 py-2 font-bold" />
+                  <input id="homePuerta_${esc(v.id)}" value="${esc(v.puerta)}" class="rounded-xl border border-slate-200 px-3 py-2 font-bold" />
+                </div>
+                <input id="homePin_${esc(v.id)}" placeholder="Nuevo PIN opcional" class="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" />
+                <input id="homeMotivo_${esc(v.id)}" value="${esc(v.motivo_bloqueo || '')}" placeholder="Motivo bloqueo opcional" class="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                <div class="mt-3 flex flex-wrap items-center gap-3 text-sm font-bold">
+                  <label><input id="homeActiva_${esc(v.id)}" type="checkbox" ${v.activa ? 'checked' : ''}/> Activa</label>
+                  <label><input id="homeBloqueada_${esc(v.id)}" type="checkbox" ${v.bloqueada ? 'checked' : ''}/> Bloqueada</label>
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                  <button onclick="saveHome('${esc(v.id)}')" class="rounded-xl bg-white px-3 py-2 text-xs font-black ring-1 ring-slate-200">Guardar</button>
+                  <button onclick="deactivateHome('${esc(v.id)}')" class="rounded-xl bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 ring-1 ring-rose-200">Desactivar</button>
+                </div>
+              </div>
+            `).join('') || `<p class="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No hay viviendas.</p>`}
+          </div>
+
+          <div class="mt-5 rounded-2xl bg-white p-3 ring-1 ring-slate-200">
+            <h4 class="font-black">Añadir vivienda</h4>
+            <div class="mt-3 grid grid-cols-4 gap-2">
+              <input id="addHomeBloque" placeholder="Bloque" class="rounded-xl border border-slate-200 px-2 py-2 text-sm font-bold" />
+              <input id="addHomePiso" placeholder="Piso" class="rounded-xl border border-slate-200 px-2 py-2 text-sm font-bold" />
+              <input id="addHomePuerta" placeholder="Puerta" class="rounded-xl border border-slate-200 px-2 py-2 text-sm font-bold" />
+              <input id="addHomePin" placeholder="PIN" class="rounded-xl border border-slate-200 px-2 py-2 text-sm font-bold" />
+            </div>
+            <button onclick="addHomeToCurrentCommunity()" class="mt-3 w-full rounded-xl bg-teal-700 px-3 py-3 text-sm font-black text-white">Añadir vivienda</button>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Recursos</h3>
+          <div class="mt-4 space-y-3">
+            ${recursos.map(r => `
+              <div class="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                <input id="resNombre_${esc(r.id)}" value="${esc(r.nombre)}" class="w-full rounded-xl border border-slate-200 px-3 py-2 font-bold" />
+                <div class="mt-2 grid grid-cols-2 gap-2">
+                  <select id="resTipo_${esc(r.id)}" class="rounded-xl border border-slate-200 px-3 py-2 font-bold">
+                    ${['padel','tenis','sala','gimnasio','piscina','barbacoa','otro'].map(t => `<option value="${t}" ${r.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}
+                  </select>
+                  <input id="resHoras_${esc(r.id)}" value="${esc(hoursFromSchedule(r.horario_config))}" placeholder="09:00,10:00" class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" />
+                </div>
+                <div class="mt-2 grid grid-cols-3 gap-2">
+                  <input id="resDuracion_${esc(r.id)}" type="number" value="${esc(r.duracion_minutos)}" class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" />
+                  <input id="resAntelacion_${esc(r.id)}" type="number" value="${esc(r.antelacion_horas)}" class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" />
+                  <input id="resLimite_${esc(r.id)}" type="number" value="${esc(r.max_reservas_dia_por_vivienda)}" class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" />
+                </div>
+                <label class="mt-3 block text-sm font-bold"><input id="resActivo_${esc(r.id)}" type="checkbox" ${r.activo ? 'checked' : ''}/> Recurso activo</label>
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                  <button onclick="saveResource('${esc(r.id)}')" class="rounded-xl bg-white px-3 py-2 text-xs font-black ring-1 ring-slate-200">Guardar</button>
+                  <button onclick="deactivateResource('${esc(r.id)}')" class="rounded-xl bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 ring-1 ring-rose-200">Desactivar</button>
+                </div>
+              </div>
+            `).join('') || `<p class="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No hay recursos.</p>`}
+          </div>
+
+          <div class="mt-5 rounded-2xl bg-white p-3 ring-1 ring-slate-200">
+            <h4 class="font-black">Añadir recurso</h4>
+            <textarea id="addResourceLine" rows="3" class="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-mono" placeholder="Pista de Pádel 2 | padel | 09:00,10:00,11:00,17:00,18:00,19:00 | 60 | 24 | 1"></textarea>
+            <button onclick="addResourceToCurrentCommunity()" class="mt-3 w-full rounded-xl bg-teal-700 px-3 py-3 text-sm font-black text-white">Añadir recurso</button>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Admins de comunidad</h3>
+          <div class="mt-3 space-y-3">
+            ${admins.map(a => `
+              <div class="rounded-2xl bg-slate-50 p-3 text-sm ring-1 ring-slate-200">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="font-black">${esc(a.username)}</div>
+                    <div class="mt-1 text-xs text-slate-500">${esc(a.rol)} · ${a.activo ? 'activo' : 'inactivo'}</div>
+                  </div>
+                  <label class="shrink-0 text-xs font-bold"><input id="adminActivo_${esc(a.id)}" type="checkbox" ${a.activo ? 'checked' : ''}/> Activo</label>
+                </div>
+                <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <input id="adminPass_${esc(a.id)}" type="password" placeholder="Nueva contraseña" class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold sm:col-span-2" />
+                  <button onclick="changeCommunityAdminPassword('${esc(a.id)}')" class="rounded-xl bg-white px-3 py-2 text-xs font-black ring-1 ring-slate-200">Cambiar clave</button>
+                </div>
+                <button onclick="saveCommunityAdminStatus('${esc(a.id)}')" class="mt-2 w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white">Guardar estado admin</button>
+              </div>
+            `).join('') || '<p class="text-sm text-slate-500">No hay admins.</p>'}
+          </div>
+          <div class="mt-4 grid grid-cols-2 gap-2">
+            <input id="addAdminUser" placeholder="Nuevo usuario" class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" />
+            <input id="addAdminPass" placeholder="Contraseña" class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" />
+          </div>
+          <button onclick="addAdminToCurrentCommunity()" class="mt-3 w-full rounded-xl bg-slate-900 px-3 py-3 text-sm font-black text-white">Añadir admin</button>
+        </section>
+      `);
+    }
+
+    function parseHomes(raw) {
+      return raw.split('\n').map(l => l.trim()).filter(Boolean).map((line, idx) => {
+        const parts = line.split(',').map(p => p.trim());
+        if (parts.length !== 4 || parts.some(p => !p)) throw new Error(`Vivienda línea ${idx + 1}: usa bloque,piso,puerta,pin`);
+        return { bloque: parts[0], piso: parts[1], puerta: parts[2], pin: parts[3] };
+      });
+    }
+
+    function scheduleEveryDay(hours) {
+      return {
+        lunes: hours, martes: hours, miercoles: hours, jueves: hours,
+        viernes: hours, sabado: hours, domingo: hours,
+      };
+    }
+
+    function parseResources(raw) {
+      return raw.split('\n').map(l => l.trim()).filter(Boolean).map((line, idx) => {
+        const parts = line.split('|').map(p => p.trim());
+        if (parts.length !== 6 || parts.some(p => !p)) throw new Error(`Recurso línea ${idx + 1}: usa Nombre | tipo | horas | duración | antelación | límite diario`);
+        const horas = parts[2].split(',').map(h => h.trim()).filter(Boolean);
+        const duracion = parseInt(parts[3], 10);
+        const antelacion = parseInt(parts[4], 10);
+        const limite = parseInt(parts[5], 10);
+        if (!horas.length || !duracion || antelacion < 0 || !limite) throw new Error(`Recurso línea ${idx + 1}: revisa horas/duración/antelación/límite.`);
+        return { nombre: parts[0], tipo: parts[1], horas, duracion, antelacion, limite };
+      });
+    }
+
+    async function openCommunityEditor(comunidadId) {
+      try {
+        state.loading = true; render();
+        state.adminEditingCommunity = await rpc('admin_obtener_comunidad', {
+          p_token: state.adminToken,
+          p_comunidad_id: comunidadId,
+        });
+        state.loading = false;
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderSuperAdminPanel();
+      }
+    }
+
+    function backToSuperAdminList() {
+      state.adminEditingCommunity = null;
+      renderSuperAdminPanel();
+    }
+
+    async function reloadCommunityEditor() {
+      const id = state.adminEditingCommunity?.comunidad?.id;
+      if (!id) return renderSuperAdminPanel();
+      state.adminEditingCommunity = await rpc('admin_obtener_comunidad', {
+        p_token: state.adminToken,
+        p_comunidad_id: id,
+      });
+    }
+
+    async function saveCommunityBasic() {
+      const id = state.adminEditingCommunity?.comunidad?.id;
+      const nombre = document.getElementById('editComName')?.value.trim() || '';
+      const codigoAcceso = (document.getElementById('editComCode')?.value.trim() || '').toUpperCase();
+      const activa = !!document.getElementById('editComActive')?.checked;
+      const timezone = document.getElementById('editComTimezone')?.value.trim() || 'Europe/Madrid';
+      try {
+        state.loading = true; render();
+        await rpc('admin_actualizar_comunidad', {
+          p_token: state.adminToken,
+          p_comunidad_id: id,
+          p_nombre: nombre,
+          p_codigo_acceso: codigoAcceso,
+          p_activa: activa,
+          p_timezone: timezone,
+        });
+        await loadAdminCommunities();
+        await reloadCommunityEditor();
+        state.loading = false;
+        setMessage('ok', 'Comunidad actualizada.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function addHomeToCurrentCommunity() {
+      const comunidadId = state.adminEditingCommunity?.comunidad?.id;
+      try {
+        const bloque = document.getElementById('addHomeBloque')?.value.trim() || '';
+        const piso = document.getElementById('addHomePiso')?.value.trim() || '';
+        const puerta = document.getElementById('addHomePuerta')?.value.trim() || '';
+        const pin = document.getElementById('addHomePin')?.value.trim() || '';
+        if (!bloque || !piso || !puerta || !pin) throw new Error('Completa bloque, piso, puerta y PIN.');
+        state.loading = true; render();
+        await rpc('admin_crear_vivienda', { p_token: state.adminToken, p_comunidad_id: comunidadId, p_bloque: bloque, p_piso: piso, p_puerta: puerta, p_pin: pin });
+        await reloadCommunityEditor();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', 'Vivienda añadida.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function saveHome(id) {
+      const bloque = document.getElementById(`homeBloque_${id}`)?.value.trim() || '';
+      const piso = document.getElementById(`homePiso_${id}`)?.value.trim() || '';
+      const puerta = document.getElementById(`homePuerta_${id}`)?.value.trim() || '';
+      const activa = !!document.getElementById(`homeActiva_${id}`)?.checked;
+      const bloqueada = !!document.getElementById(`homeBloqueada_${id}`)?.checked;
+      const motivoBloqueo = document.getElementById(`homeMotivo_${id}`)?.value.trim() || null;
+      const pin = document.getElementById(`homePin_${id}`)?.value.trim() || null;
+      try {
+        state.loading = true; render();
+        await rpc('admin_actualizar_vivienda', {
+          p_token: state.adminToken,
+          p_vivienda_id: id,
+          p_bloque: bloque,
+          p_piso: piso,
+          p_puerta: puerta,
+          p_activa: activa,
+          p_bloqueada: bloqueada,
+          p_motivo_bloqueo: motivoBloqueo,
+          p_pin: pin,
+        });
+        await reloadCommunityEditor();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', 'Vivienda actualizada.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function deactivateHome(id) {
+      if (!confirm('¿Desactivar esta vivienda? No aparecerá para reservar, pero se conservan reservas históricas.')) return;
+      try {
+        state.loading = true; render();
+        await rpc('admin_eliminar_vivienda', { p_token: state.adminToken, p_vivienda_id: id });
+        await reloadCommunityEditor();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', 'Vivienda desactivada.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function addResourceToCurrentCommunity() {
+      const comunidadId = state.adminEditingCommunity?.comunidad?.id;
+      try {
+        const parsed = parseResources(document.getElementById('addResourceLine')?.value || '');
+        if (parsed.length !== 1) throw new Error('Añade un solo recurso por vez.');
+        const r = parsed[0];
+        state.loading = true; render();
+        await rpc('admin_crear_recurso', {
+          p_token: state.adminToken,
+          p_comunidad_id: comunidadId,
+          p_nombre: r.nombre,
+          p_tipo: r.tipo,
+          p_duracion_minutos: r.duracion,
+          p_antelacion_horas: r.antelacion,
+          p_max_reservas_dia_por_vivienda: r.limite,
+          p_horario_config: scheduleEveryDay(r.horas),
+        });
+        await reloadCommunityEditor();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', 'Recurso añadido.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function saveResource(id) {
+      try {
+        const nombre = document.getElementById(`resNombre_${id}`)?.value.trim() || '';
+        const tipo = document.getElementById(`resTipo_${id}`)?.value || 'otro';
+        const activo = !!document.getElementById(`resActivo_${id}`)?.checked;
+        const duracion = parseInt(document.getElementById(`resDuracion_${id}`)?.value || '60', 10);
+        const antelacion = parseInt(document.getElementById(`resAntelacion_${id}`)?.value || '24', 10);
+        const limite = parseInt(document.getElementById(`resLimite_${id}`)?.value || '1', 10);
+        const horas = (document.getElementById(`resHoras_${id}`)?.value || '').split(',').map(h => h.trim()).filter(Boolean);
+        state.loading = true; render();
+        await rpc('admin_actualizar_recurso', {
+          p_token: state.adminToken,
+          p_recurso_id: id,
+          p_nombre: nombre,
+          p_tipo: tipo,
+          p_activo: activo,
+          p_duracion_minutos: duracion,
+          p_antelacion_horas: antelacion,
+          p_max_reservas_dia_por_vivienda: limite,
+          p_horario_config: scheduleEveryDay(horas),
+        });
+        await reloadCommunityEditor();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', 'Recurso actualizado.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function deactivateResource(id) {
+      if (!confirm('¿Desactivar este recurso? No aparecerá para reservar, pero se conservan reservas históricas.')) return;
+      try {
+        state.loading = true; render();
+        await rpc('admin_eliminar_recurso', { p_token: state.adminToken, p_recurso_id: id });
+        await reloadCommunityEditor();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', 'Recurso desactivado.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function changeMyAdminPassword() {
+      const pass1 = document.getElementById('superPass1')?.value || '';
+      const pass2 = document.getElementById('superPass2')?.value || '';
+      try {
+        if (!pass1 || !pass2) throw new Error('Introduce y repite la nueva contraseña.');
+        if (pass1 !== pass2) throw new Error('Las contraseñas no coinciden.');
+        if (pass1.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
+        if (!confirm('¿Cambiar la contraseña del superadmin?')) return;
+        state.loading = true; render();
+        await rpc('admin_cambiar_mi_password', {
+          p_token: state.adminToken,
+          p_password_nueva: pass1,
+        });
+        state.loading = false;
+        setMessage('ok', 'Contraseña del superadmin actualizada.');
+        renderSuperAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderSuperAdminPanel();
+      }
+    }
+
+    async function changeCommunityAdminPassword(adminId) {
+      const password = document.getElementById(`adminPass_${adminId}`)?.value || '';
+      try {
+        if (!password) throw new Error('Introduce la nueva contraseña.');
+        if (password.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
+        if (!confirm('¿Cambiar la contraseña de este admin?')) return;
+        state.loading = true; render();
+        await rpc('admin_cambiar_password_admin', {
+          p_token: state.adminToken,
+          p_admin_id: adminId,
+          p_password_nueva: password,
+        });
+        await reloadCommunityEditor();
+        state.loading = false;
+        setMessage('ok', 'Contraseña del admin actualizada.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function saveCommunityAdminStatus(adminId) {
+      const activo = !!document.getElementById(`adminActivo_${adminId}`)?.checked;
+      try {
+        state.loading = true; render();
+        await rpc('admin_actualizar_admin_comunidad', {
+          p_token: state.adminToken,
+          p_admin_id: adminId,
+          p_activo: activo,
+        });
+        await reloadCommunityEditor();
+        state.loading = false;
+        setMessage('ok', 'Estado del admin actualizado.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function addAdminToCurrentCommunity() {
+      const comunidadId = state.adminEditingCommunity?.comunidad?.id;
+      const username = document.getElementById('addAdminUser')?.value.trim() || '';
+      const password = document.getElementById('addAdminPass')?.value || '';
+      try {
+        if (!username || !password) throw new Error('Introduce usuario y contraseña.');
+        state.loading = true; render();
+        await rpc('admin_crear_admin_comunidad', { p_token: state.adminToken, p_comunidad_id: comunidadId, p_username: username, p_password: password, p_rol: 'admin' });
+        await reloadCommunityEditor();
+        state.loading = false;
+        setMessage('ok', 'Admin añadido.');
+        renderCommunityEditor();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderCommunityEditor();
+      }
+    }
+
+    async function createFullCommunity() {
+      const nombre = document.getElementById('newComName')?.value.trim() || '';
+      const codigo = document.getElementById('newComCode')?.value.trim().toUpperCase() || '';
+      const adminUser = document.getElementById('newAdminUser')?.value.trim() || '';
+      const adminPass = document.getElementById('newAdminPass')?.value || '';
+      let homes, resources;
+      try {
+        if (!nombre || !codigo) throw new Error('Introduce nombre y código de comunidad.');
+        homes = parseHomes(document.getElementById('newHomes')?.value || '');
+        resources = parseResources(document.getElementById('newResources')?.value || '');
+        if (!homes.length) throw new Error('Añade al menos una vivienda.');
+        if (!resources.length) throw new Error('Añade al menos un recurso.');
+        state.loading = true; render();
+        const created = await rpc('admin_crear_comunidad', {
+          p_token: state.adminToken,
+          p_nombre: nombre,
+          p_codigo_acceso: codigo,
+          p_timezone: 'Europe/Madrid',
+        });
+        const comunidadId = created.comunidad_id;
+        for (const h of homes) {
+          await rpc('admin_crear_vivienda', {
+            p_token: state.adminToken,
+            p_comunidad_id: comunidadId,
+            p_bloque: h.bloque,
+            p_piso: h.piso,
+            p_puerta: h.puerta,
+            p_pin: h.pin,
+          });
+        }
+        for (const r of resources) {
+          await rpc('admin_crear_recurso', {
+            p_token: state.adminToken,
+            p_comunidad_id: comunidadId,
+            p_nombre: r.nombre,
+            p_tipo: r.tipo,
+            p_duracion_minutos: r.duracion,
+            p_antelacion_horas: r.antelacion,
+            p_max_reservas_dia_por_vivienda: r.limite,
+            p_horario_config: scheduleEveryDay(r.horas),
+          });
+        }
+        if (adminUser && adminPass) {
+          await rpc('admin_crear_admin_comunidad', {
+            p_token: state.adminToken,
+            p_comunidad_id: comunidadId,
+            p_username: adminUser,
+            p_password: adminPass,
+            p_rol: 'admin',
+          });
+        }
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', `Comunidad ${codigo} creada correctamente.`);
+        renderSuperAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderSuperAdminPanel();
+      }
+    }
+
+    async function deleteCommunity(comunidadId, codigo, nombre) {
+      const confirmacion = prompt(`Vas a eliminar ${nombre}. Esto borra viviendas, recursos, reservas y admins de esa comunidad.\n\nPara confirmar, escribe el código: ${codigo}`);
+      if (!confirmacion) return;
+      try {
+        state.loading = true; render();
+        await rpc('admin_eliminar_comunidad', {
+          p_token: state.adminToken,
+          p_comunidad_id: comunidadId,
+          p_confirmacion: confirmacion.trim(),
+        });
+        if (state.comunidad?.id === comunidadId) logoutCommunity();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', `Comunidad ${codigo} eliminada.`);
+        renderSuperAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderSuperAdminPanel();
+      }
+    }
+
+    async function refreshSuperAdmin() {
+      try {
+        state.loading = true; render();
+        await loadAdminCommunities();
+        state.loading = false;
+        renderSuperAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+      }
+    }
+
+    function renderCommunityAdminPanel() {
+      const rows = state.viviendas.map(v => `
+        <div class="flex items-center justify-between rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+          <div>
+            <div class="font-black">${esc(v.bloque)} · ${esc(v.piso)} · ${esc(v.puerta)}</div>
+            <div class="text-xs ${v.bloqueada ? 'text-rose-700' : 'text-emerald-700'}">${v.bloqueada ? 'Bloqueada' : 'Activa'}</div>
+          </div>
+          <button onclick="adminToggleHome('${esc(v.id)}', ${!v.bloqueada})" class="rounded-full bg-white px-3 py-2 text-xs font-bold ring-1 ring-slate-200">${v.bloqueada ? 'Desbloquear' : 'Bloquear'}</button>
+        </div>
+      `).join('');
+      shell(`
+        <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h2 class="text-xl font-black">Panel admin</h2>
+          <p class="mt-1 text-sm text-slate-500">Gestión rápida de viviendas de la comunidad cargada.</p>
+          <div class="mt-4 space-y-2">${rows || '<p class="text-sm text-slate-500">Carga primero una comunidad.</p>'}</div>
+          <button onclick="adminLogout()" class="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 font-black text-white">Salir admin</button>
+        </section>
+      `);
+    }
+
+    async function adminToggleHome(viviendaId, bloquear) {
+      try {
+        const motivo = bloquear ? (prompt('Motivo del bloqueo, opcional') || '') : '';
+        state.loading = true; render();
+        await rpc('admin_bloquear_vivienda', {
+          p_token: state.adminToken,
+          p_vivienda_id: viviendaId,
+          p_bloquear: bloquear,
+          p_motivo: motivo,
+        });
+        state.viviendas = await rpc('app_listar_viviendas', { p_codigo_acceso: state.comunidadCode });
+        state.loading = false;
+        renderCommunityAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+      }
+    }
+
+    function adminLogout() {
+      localStorage.removeItem('reservia73_admin_token');
+      state.adminToken = '';
+      state.admin = null;
+      state.adminCommunities = [];
+      state.adminEditingCommunity = null;
+      render();
+    }
+
+    window.loadCommunity = loadCommunity;
+    window.logoutCommunity = logoutCommunity;
+    window.selectResource = selectResource;
+    window.changeDate = changeDate;
+    window.selectSlot = selectSlot;
+    window.createBooking = createBooking;
+    window.openCancel = openCancel;
+    window.adminLogin = adminLogin;
+    window.adminToggleHome = adminToggleHome;
+    window.adminLogout = adminLogout;
+    window.refreshSuperAdmin = refreshSuperAdmin;
+    window.createFullCommunity = createFullCommunity;
+    window.deleteCommunity = deleteCommunity;
+    window.openCommunityEditor = openCommunityEditor;
+    window.backToSuperAdminList = backToSuperAdminList;
+    window.saveCommunityBasic = saveCommunityBasic;
+    window.addHomeToCurrentCommunity = addHomeToCurrentCommunity;
+    window.saveHome = saveHome;
+    window.deactivateHome = deactivateHome;
+    window.addResourceToCurrentCommunity = addResourceToCurrentCommunity;
+    window.saveResource = saveResource;
+    window.deactivateResource = deactivateResource;
+    window.addAdminToCurrentCommunity = addAdminToCurrentCommunity;
+    window.changeMyAdminPassword = changeMyAdminPassword;
+    window.changeCommunityAdminPassword = changeCommunityAdminPassword;
+    window.saveCommunityAdminStatus = saveCommunityAdminStatus;
+    window.render = render;
+
+    if (state.comunidadCode) loadCommunity(); else render();
+  
+  </script>
+</body>
+</html>
