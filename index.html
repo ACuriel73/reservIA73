@@ -41,6 +41,7 @@
       message: null,
       adminToken: localStorage.getItem('reservia73_admin_token') || '',
       admin: null,
+      adminCommunities: [],
       adminTapCount: 0,
     };
 
@@ -305,7 +306,7 @@
       render();
     }
 
-    // Admin básico por triple tap abajo a la derecha.
+    // Admin por triple tap abajo a la derecha.
     document.getElementById('adminHotspot').addEventListener('click', () => {
       state.adminTapCount++;
       setTimeout(() => state.adminTapCount = 0, 1200);
@@ -333,7 +334,8 @@
     }
 
     async function adminLogin() {
-      const adminCode = document.getElementById('adminCode')?.value.trim().toUpperCase() || null;
+      const adminCodeRaw = document.getElementById('adminCode')?.value.trim().toUpperCase() || '';
+      const adminCode = adminCodeRaw || null;
       const adminUser = document.getElementById('adminUser')?.value.trim() || '';
       const adminPass = document.getElementById('adminPass')?.value || '';
 
@@ -344,6 +346,7 @@
       }
 
       try {
+        state.loading = true; state.message = null; render();
         const data = await rpc('admin_login', {
           p_codigo_acceso: adminCode,
           p_username: adminUser,
@@ -352,23 +355,208 @@
         state.adminToken = data.token;
         state.admin = data;
         localStorage.setItem('reservia73_admin_token', data.token);
-        localStorage.setItem('reservia73_admin_rol', data.rol || '');
-        setMessage('ok', 'Sesión admin iniciada.');
-        if (data.rol === 'admin' && adminCode) {
-          state.comunidadCode = adminCode;
-          await loadCommunity();
+        state.loading = false;
+        if (data.rol === 'superadmin') {
+          await loadAdminCommunities();
+          renderSuperAdminPanel();
+        } else {
+          setMessage('ok', 'Sesión admin iniciada.');
+          renderCommunityAdminPanel();
         }
-        renderAdminPanel();
       } catch (e) {
+        state.loading = false;
         setMessage('err', e.message);
         renderAdminLogin();
       }
     }
 
-    function renderAdminPanel() {
-      const isSuper = state.admin?.rol === 'superadmin' || localStorage.getItem('reservia73_admin_rol') === 'superadmin';
-      if (isSuper) return renderSuperAdminPanel();
-      return renderCommunityAdminPanel();
+    async function loadAdminCommunities() {
+      state.adminCommunities = await rpc('admin_listar_comunidades', { p_token: state.adminToken }) || [];
+    }
+
+    function defaultResourceLines() {
+      return `Pista de Pádel 1 | padel | 09:00,10:00,11:00,12:00,17:00,18:00,19:00,20:00,21:00 | 60 | 24 | 1\nSala Social | sala | 10:00,11:00,12:00,17:00,18:00,19:00 | 60 | 24 | 1`;
+    }
+
+    function renderSuperAdminPanel() {
+      const communities = state.adminCommunities || [];
+      shell(`
+        <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-black">Panel superadmin</h2>
+              <p class="mt-1 text-sm text-slate-500">Crear y eliminar comunidades de ReservIA73.</p>
+            </div>
+            <button onclick="adminLogout()" class="rounded-full bg-slate-900 px-3 py-2 text-xs font-black text-white">Salir</button>
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Comunidades</h3>
+          <button onclick="refreshSuperAdmin()" class="mt-3 w-full rounded-2xl bg-white px-4 py-3 text-sm font-bold ring-1 ring-slate-200">Actualizar listado</button>
+          <div class="mt-4 space-y-2">
+            ${communities.length ? communities.map(c => `
+              <div class="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="font-black">${esc(c.nombre)}</div>
+                    <div class="mt-1 text-xs font-bold text-teal-700">Código: ${esc(c.codigo_acceso)}</div>
+                    <div class="mt-1 text-xs text-slate-500">${esc(c.viviendas_count)} viviendas · ${esc(c.recursos_count)} recursos · ${esc(c.reservas_activas_count)} reservas activas</div>
+                  </div>
+                  <button onclick="deleteCommunity('${esc(c.id)}','${esc(c.codigo_acceso)}','${esc(c.nombre)}')" class="rounded-full bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 ring-1 ring-rose-200">Eliminar</button>
+                </div>
+              </div>
+            `).join('') : `<p class="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No hay comunidades todavía.</p>`}
+          </div>
+        </section>
+
+        <section class="mt-4 card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+          <h3 class="font-black">Crear comunidad</h3>
+          <p class="mt-1 text-xs text-slate-500">Crea la comunidad, sus viviendas, recursos y admin inicial en una sola operación.</p>
+          <div class="mt-4 space-y-3">
+            <input id="newComName" placeholder="Nombre comunidad. Ej: Residencial Sol" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            <input id="newComCode" placeholder="Código acceso. Ej: SOL2026" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold uppercase" />
+            <div class="grid grid-cols-2 gap-2">
+              <input id="newAdminUser" value="admin" placeholder="Usuario admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+              <input id="newAdminPass" value="Admin2026" placeholder="Contraseña admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
+            </div>
+            <label class="block">
+              <span class="mb-2 block text-sm font-bold text-slate-700">Viviendas: bloque,piso,puerta,pin</span>
+              <textarea id="newHomes" rows="6" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-mono" placeholder="A,1,1,1234\nA,1,2,2222\nB,2,1,3333"></textarea>
+            </label>
+            <label class="block">
+              <span class="mb-2 block text-sm font-bold text-slate-700">Recursos</span>
+              <textarea id="newResources" rows="7" class="w-full rounded-2xl border border-slate-200 px-4 py-3 text-xs font-mono">${esc(defaultResourceLines())}</textarea>
+              <p class="mt-2 text-xs text-slate-500">Formato: Nombre | tipo | horas | duración | antelación | límite diario</p>
+            </label>
+            <button onclick="createFullCommunity()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20">Crear comunidad completa</button>
+          </div>
+        </section>
+      `);
+    }
+
+    function parseHomes(raw) {
+      return raw.split('\n').map(l => l.trim()).filter(Boolean).map((line, idx) => {
+        const parts = line.split(',').map(p => p.trim());
+        if (parts.length !== 4 || parts.some(p => !p)) throw new Error(`Vivienda línea ${idx + 1}: usa bloque,piso,puerta,pin`);
+        return { bloque: parts[0], piso: parts[1], puerta: parts[2], pin: parts[3] };
+      });
+    }
+
+    function scheduleEveryDay(hours) {
+      return {
+        lunes: hours, martes: hours, miercoles: hours, jueves: hours,
+        viernes: hours, sabado: hours, domingo: hours,
+      };
+    }
+
+    function parseResources(raw) {
+      return raw.split('\n').map(l => l.trim()).filter(Boolean).map((line, idx) => {
+        const parts = line.split('|').map(p => p.trim());
+        if (parts.length !== 6 || parts.some(p => !p)) throw new Error(`Recurso línea ${idx + 1}: usa Nombre | tipo | horas | duración | antelación | límite diario`);
+        const horas = parts[2].split(',').map(h => h.trim()).filter(Boolean);
+        const duracion = parseInt(parts[3], 10);
+        const antelacion = parseInt(parts[4], 10);
+        const limite = parseInt(parts[5], 10);
+        if (!horas.length || !duracion || antelacion < 0 || !limite) throw new Error(`Recurso línea ${idx + 1}: revisa horas/duración/antelación/límite.`);
+        return { nombre: parts[0], tipo: parts[1], horas, duracion, antelacion, limite };
+      });
+    }
+
+    async function createFullCommunity() {
+      const nombre = document.getElementById('newComName')?.value.trim() || '';
+      const codigo = document.getElementById('newComCode')?.value.trim().toUpperCase() || '';
+      const adminUser = document.getElementById('newAdminUser')?.value.trim() || '';
+      const adminPass = document.getElementById('newAdminPass')?.value || '';
+      let homes, resources;
+      try {
+        if (!nombre || !codigo) throw new Error('Introduce nombre y código de comunidad.');
+        homes = parseHomes(document.getElementById('newHomes')?.value || '');
+        resources = parseResources(document.getElementById('newResources')?.value || '');
+        if (!homes.length) throw new Error('Añade al menos una vivienda.');
+        if (!resources.length) throw new Error('Añade al menos un recurso.');
+        state.loading = true; render();
+        const created = await rpc('admin_crear_comunidad', {
+          p_token: state.adminToken,
+          p_nombre: nombre,
+          p_codigo_acceso: codigo,
+          p_timezone: 'Europe/Madrid',
+        });
+        const comunidadId = created.comunidad_id;
+        for (const h of homes) {
+          await rpc('admin_crear_vivienda', {
+            p_token: state.adminToken,
+            p_comunidad_id: comunidadId,
+            p_bloque: h.bloque,
+            p_piso: h.piso,
+            p_puerta: h.puerta,
+            p_pin: h.pin,
+          });
+        }
+        for (const r of resources) {
+          await rpc('admin_crear_recurso', {
+            p_token: state.adminToken,
+            p_comunidad_id: comunidadId,
+            p_nombre: r.nombre,
+            p_tipo: r.tipo,
+            p_duracion_minutos: r.duracion,
+            p_antelacion_horas: r.antelacion,
+            p_max_reservas_dia_por_vivienda: r.limite,
+            p_horario_config: scheduleEveryDay(r.horas),
+          });
+        }
+        if (adminUser && adminPass) {
+          await rpc('admin_crear_admin_comunidad', {
+            p_token: state.adminToken,
+            p_comunidad_id: comunidadId,
+            p_username: adminUser,
+            p_password: adminPass,
+            p_rol: 'admin',
+          });
+        }
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', `Comunidad ${codigo} creada correctamente.`);
+        renderSuperAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderSuperAdminPanel();
+      }
+    }
+
+    async function deleteCommunity(comunidadId, codigo, nombre) {
+      const confirmacion = prompt(`Vas a eliminar ${nombre}. Esto borra viviendas, recursos, reservas y admins de esa comunidad.\n\nPara confirmar, escribe el código: ${codigo}`);
+      if (!confirmacion) return;
+      try {
+        state.loading = true; render();
+        await rpc('admin_eliminar_comunidad', {
+          p_token: state.adminToken,
+          p_comunidad_id: comunidadId,
+          p_confirmacion: confirmacion.trim(),
+        });
+        if (state.comunidad?.id === comunidadId) logoutCommunity();
+        await loadAdminCommunities();
+        state.loading = false;
+        setMessage('ok', `Comunidad ${codigo} eliminada.`);
+        renderSuperAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+        renderSuperAdminPanel();
+      }
+    }
+
+    async function refreshSuperAdmin() {
+      try {
+        state.loading = true; render();
+        await loadAdminCommunities();
+        state.loading = false;
+        renderSuperAdminPanel();
+      } catch (e) {
+        state.loading = false;
+        setMessage('err', e.message);
+      }
     }
 
     function renderCommunityAdminPanel() {
@@ -391,154 +579,6 @@
       `);
     }
 
-    function defaultResourceLines() {
-      return 'Pista de Pádel 1 | padel | 09:00,10:00,11:00,12:00,17:00,18:00,19:00,20:00,21:00 | 60 | 24 | 1\nSala Social | sala | 10:00,11:00,12:00,17:00,18:00,19:00 | 60 | 24 | 1';
-    }
-
-    function renderSuperAdminPanel() {
-      shell(`
-        <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
-          <h2 class="text-xl font-black">Panel superadmin</h2>
-          <p class="mt-1 text-sm text-slate-500">Crear una comunidad completa sin tocar SQL.</p>
-
-          <div class="mt-5 space-y-4">
-            <div class="grid grid-cols-1 gap-3">
-              <label class="block">
-                <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Nombre comunidad</span>
-                <input id="newCommunityName" placeholder="Ej: Residencial Sol" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Código acceso</span>
-                <input id="newCommunityCode" placeholder="Ej: SOL2026" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold uppercase" />
-              </label>
-            </div>
-
-            <label class="block">
-              <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Viviendas</span>
-              <textarea id="newHomes" rows="7" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-mono text-xs" placeholder="Bloque, Piso, Puerta, PIN">A,1,1,1234\nA,1,2,2222\nA,2,1,3333\nA,2,2,4444\nB,1,1,5555\nB,1,2,6666</textarea>
-              <p class="mt-1 text-xs text-slate-500">Una vivienda por línea: <b>Bloque, Piso, Puerta, PIN</b></p>
-            </label>
-
-            <label class="block">
-              <span class="mb-1 block text-xs font-black uppercase tracking-wider text-slate-500">Recursos</span>
-              <textarea id="newResources" rows="6" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-mono text-xs">${esc(defaultResourceLines())}</textarea>
-              <p class="mt-1 text-xs text-slate-500">Una línea por recurso: <b>Nombre | tipo | horas | duración | antelación | límite</b>. Tipos: padel, tenis, sala, gimnasio, piscina, barbacoa, otro.</p>
-            </label>
-
-            <div class="grid grid-cols-1 gap-3 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
-              <div class="text-sm font-black">Admin inicial de la comunidad</div>
-              <input id="newAdminUser" value="admin" placeholder="Usuario admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
-              <input id="newAdminPass" value="Admin2026" type="text" placeholder="Contraseña admin" class="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold" />
-            </div>
-
-            <button onclick="superCreateCommunity()" class="w-full rounded-2xl bg-teal-700 px-4 py-4 font-black text-white shadow-lg shadow-teal-700/20 active:scale-[0.99]">Crear comunidad completa</button>
-            <button onclick="adminLogout()" class="w-full rounded-2xl bg-white px-4 py-3 font-bold ring-1 ring-slate-200">Salir superadmin</button>
-          </div>
-        </section>
-      `);
-    }
-
-    function buildHorarioConfig(hoursText) {
-      const horas = hoursText.split(',').map(x => x.trim()).filter(Boolean);
-      const dias = ['lunes','martes','miercoles','jueves','viernes','sabado','domingo'];
-      return Object.fromEntries(dias.map(d => [d, horas]));
-    }
-
-    function parseHomes(text) {
-      return text.split('\n').map((line, i) => {
-        const clean = line.trim();
-        if (!clean) return null;
-        const parts = clean.split(',').map(x => x.trim());
-        if (parts.length < 4) throw new Error(`Vivienda línea ${i + 1}: usa Bloque, Piso, Puerta, PIN.`);
-        return { bloque: parts[0], piso: parts[1], puerta: parts[2], pin: parts.slice(3).join(',').trim() };
-      }).filter(Boolean);
-    }
-
-    function parseResources(text) {
-      return text.split('\n').map((line, i) => {
-        const clean = line.trim();
-        if (!clean) return null;
-        const parts = clean.split('|').map(x => x.trim());
-        if (parts.length < 3) throw new Error(`Recurso línea ${i + 1}: usa Nombre | tipo | horas | duración | antelación | límite.`);
-        return {
-          nombre: parts[0],
-          tipo: parts[1] || 'otro',
-          horario_config: buildHorarioConfig(parts[2]),
-          duracion: Number(parts[3] || 60),
-          antelacion: Number(parts[4] || 24),
-          limite: Number(parts[5] || 1),
-        };
-      }).filter(Boolean);
-    }
-
-    async function superCreateCommunity() {
-      const nombre = document.getElementById('newCommunityName')?.value.trim() || '';
-      const codigo = document.getElementById('newCommunityCode')?.value.trim().toUpperCase() || '';
-      const adminUser = document.getElementById('newAdminUser')?.value.trim() || 'admin';
-      const adminPass = document.getElementById('newAdminPass')?.value || '';
-      let homes, resources;
-
-      try {
-        if (!nombre || !codigo) throw new Error('Introduce nombre y código de comunidad.');
-        if (!adminUser || !adminPass) throw new Error('Introduce usuario y contraseña del admin inicial.');
-        homes = parseHomes(document.getElementById('newHomes')?.value || '');
-        resources = parseResources(document.getElementById('newResources')?.value || '');
-        if (!homes.length) throw new Error('Añade al menos una vivienda.');
-        if (!resources.length) throw new Error('Añade al menos un recurso.');
-
-        state.loading = true; render();
-        const created = await rpc('admin_crear_comunidad', {
-          p_token: state.adminToken,
-          p_nombre: nombre,
-          p_codigo_acceso: codigo,
-          p_timezone: 'Europe/Madrid',
-        });
-        const comunidadId = created.comunidad_id;
-
-        for (const h of homes) {
-          await rpc('admin_crear_vivienda', {
-            p_token: state.adminToken,
-            p_comunidad_id: comunidadId,
-            p_bloque: h.bloque,
-            p_piso: h.piso,
-            p_puerta: h.puerta,
-            p_pin: h.pin,
-          });
-        }
-
-        for (const r of resources) {
-          await rpc('admin_crear_recurso', {
-            p_token: state.adminToken,
-            p_comunidad_id: comunidadId,
-            p_nombre: r.nombre,
-            p_tipo: r.tipo,
-            p_duracion_minutos: r.duracion,
-            p_antelacion_horas: r.antelacion,
-            p_max_reservas_dia_por_vivienda: r.limite,
-            p_horario_config: r.horario_config,
-          });
-        }
-
-        await rpc('admin_crear_admin_comunidad', {
-          p_token: state.adminToken,
-          p_comunidad_id: comunidadId,
-          p_username: adminUser,
-          p_password: adminPass,
-          p_rol: 'admin',
-        });
-
-        state.loading = false;
-        state.comunidadCode = codigo;
-        localStorage.setItem('reservia73_code', codigo);
-        await loadCommunity();
-        setMessage('ok', `Comunidad ${codigo} creada correctamente.`);
-      } catch (e) {
-        state.loading = false;
-        setMessage('err', e.message);
-        renderSuperAdminPanel();
-      }
-    }
-
     async function adminToggleHome(viviendaId, bloquear) {
       try {
         const motivo = bloquear ? (prompt('Motivo del bloqueo, opcional') || '') : '';
@@ -551,7 +591,7 @@
         });
         state.viviendas = await rpc('app_listar_viviendas', { p_codigo_acceso: state.comunidadCode });
         state.loading = false;
-        renderAdminPanel();
+        renderCommunityAdminPanel();
       } catch (e) {
         state.loading = false;
         setMessage('err', e.message);
@@ -560,9 +600,9 @@
 
     function adminLogout() {
       localStorage.removeItem('reservia73_admin_token');
-      localStorage.removeItem('reservia73_admin_rol');
       state.adminToken = '';
       state.admin = null;
+      state.adminCommunities = [];
       render();
     }
 
@@ -574,10 +614,11 @@
     window.createBooking = createBooking;
     window.openCancel = openCancel;
     window.adminLogin = adminLogin;
-    window.renderAdminPanel = renderAdminPanel;
-    window.superCreateCommunity = superCreateCommunity;
     window.adminToggleHome = adminToggleHome;
     window.adminLogout = adminLogout;
+    window.refreshSuperAdmin = refreshSuperAdmin;
+    window.createFullCommunity = createFullCommunity;
+    window.deleteCommunity = deleteCommunity;
     window.render = render;
 
     if (state.comunidadCode) loadCommunity(); else render();
