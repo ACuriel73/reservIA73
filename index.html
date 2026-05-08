@@ -121,9 +121,15 @@ Este software está protegido por la legislación de propiedad intelectual.
     }
 
     async function rpc(name, args) {
-      const { data, error } = await sb.rpc(name, args);
-      if (error) throw new Error(normalizeError(error));
-      return data;
+  const { data, error } = await sb.rpc(name, args);
+  if (error) throw new Error(normalizeError(error));
+
+  if (data && typeof data === 'object' && data.ok === false) {
+    throw new Error(data.mensaje || 'Operación no permitida.');
+  }
+
+  return data;
+
     }
 
     function shell(inner) {
