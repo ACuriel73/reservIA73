@@ -120,13 +120,26 @@ Este software está protegido por la legislación de propiedad intelectual.
       }, 3000);
     }
 
-    async function rpc(name, args) {
+ async function rpc(name, args) {
   const { data, error } = await sb.rpc(name, args);
   if (error) throw new Error(normalizeError(error));
 
-  if (data && typeof data === 'object' && data.ok === false) {
+  const funcionesConPin = [
+    'app_crear_reserva',
+    'app_cancelar_reserva'
+  ];
+
+  if (
+    funcionesConPin.includes(name) &&
+    data &&
+    typeof data === 'object' &&
+    data.ok === false
+  ) {
     throw new Error(data.mensaje || 'Operación no permitida.');
   }
+
+  return data;
+}
 
   return data;
 
