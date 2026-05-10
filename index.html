@@ -77,6 +77,9 @@ Este software está protegido por la legislación de propiedad intelectual.
       adminCommunities: [],
       adminEditingCommunity: null,
       adminTapCount: 0,
+      adminBlockBloque: '',
+      adminBlockPiso: '',
+      adminBlockPuerta: '',
     };
 
     function toISODate(d) {
@@ -119,33 +122,15 @@ Este software está protegido por la legislación de propiedad intelectual.
         render();
       }, 3000);
     }
-
- async function rpc(name, args) {
-  const { data, error } = await sb.rpc(name, args);
-  if (error) throw new Error(normalizeError(error));
-
-  const funcionesConPin = [
-    'app_crear_reserva',
-    'app_cancelar_reserva'
-  ];
-
-  if (
-    funcionesConPin.includes(name) &&
-    data &&
-    typeof data === 'object' &&
-    data.ok === false
-  ) {
-    throw new Error(data.mensaje || 'Operación no permitida.');
-  }
-
-  return data;
-}
-
-  return data;
-
+    async function rpc(name, args) {
+      const { data, error } = await sb.rpc(name, args);
+      if (error) throw new Error(normalizeError(error));
+      return data;
     }
 
     function shell(inner) {
+      const isCommunityAdmin = !!(state.admin && state.admin.rol !== 'superadmin');
+      app.className = `mx-auto ${isCommunityAdmin ? 'max-w-6xl' : 'max-w-md'} min-h-screen px-4 py-5 safe-bottom`;
       app.innerHTML = `
         <header class="mb-5 flex items-center justify-between">
           <div>
@@ -342,7 +327,106 @@ Este software está protegido por la legislación de propiedad intelectual.
             `}).join('') : `<p class="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No hay reservas activas para este día.</p>`}
           </div>
         </section>
+
+        ${state.admin && state.admin.rol !== 'superadmin' ? renderAdminSidePanel() : ''}
       `);
+    }
+
+    function renderAdminSidePanel() {
+      const selectedBloque = state.adminBlockBloque || '';
+      const selectedPiso = state.adminBlockPiso || '';
+      const selectedPuerta = state.adminBlockPuerta || '';
+
+      const bloques = uniqueValues(state.viviendas, 'bloque');
+      const pisos = uniqueValues(state.viviendas.filter(v => !selectedBloque || v.bloque === selectedBloque), 'piso');
+      const puertas = uniqueValues(state.viviendas.filter(v =>
+        (!selectedBloque || v.bloque === selectedBloque) &&
+        (!selectedPiso || v.piso === selectedPiso)
+      ), 'puerta');
+
+      const bloqueadas = (state.viviendas || []).filter(v => v.bloqueada);
+      const home = findAdminSelectedHome();
+
+      return `
+        <aside class="mt-4 lg:fixed lg:right-6 lg:top-5 lg:z-40 lg:max-h-[calc(100vh-2.5rem)] lg:w-80 lg:overflow-y-auto">
+          <section class="card rounded-3xl p-5 shadow-xl ring-1 ring-slate-200">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="font-black">Panel admin</h3>
+                <p class="mt-1 text-xs text-slate-500">Bloqueo rápido de viviendas.</p>
+              </div>
+              <button onclick="adminLogout()" class="rounded-full bg-slate-900 px-3 py-2 text-xs font-black text-white">Salir</button>
+            </div>
+
+            <div class="mt-4 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+              <h4 class="text-sm font-black">Bloquear vivienda</h4>
+              <div class="mt-3 space-y-2">
+                <select onchange="selectAdminBlockPart('bloque', this.value)" class="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold">
+                  <option value="">Bloque</option>
+                  ${bloques.map(b => `<option value="${esc(b)}" ${b === selectedBloque ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+                </select>
+                <select onchange="selectAdminBlockPart('piso', this.value)" ${!selectedBloque ? 'disabled' : ''} class="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold disabled:bg-slate-100 disabled:text-slate-400">
+                  <option value="">Piso</option>
+                  ${pisos.map(p => `<option value="${esc(p)}" ${p === selectedPiso ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+                </select>
+                <select onchange="selectAdminBlockPart('puerta', this.value)" ${!selectedBloque || !selectedPiso ? 'disabled' : ''} class="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold disabled:bg-slate-100 disabled:text-slate-400">
+                  <option value="">Puerta</option>
+                  ${puertas.map(p => `<option value="${esc(p)}" ${p === selectedPuerta ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+                </select>
+                <button onclick="adminBlockSelectedHome()" class="w-full rounded-xl bg-rose-600 px-3 py-3 text-sm font-black text-white disabled:opacity-50" ${!home || home.bloqueada ? 'disabled' : ''}>
+                  ${home?.bloqueada ? 'Ya está bloqueada' : 'Bloquear vivienda'}
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-4">
+              <h4 class="text-sm font-black">Viviendas bloqueadas</h4>
+              <div class="mt-3 space-y-2">
+                ${bloqueadas.length ? bloqueadas.map(v => `
+                  <div class="rounded-2xl bg-rose-50 p-3 ring-1 ring-rose-100">
+                    <div class="font-black text-rose-800">${esc(v.bloque)} · ${esc(v.piso)} · ${esc(v.puerta)}</div>
+                    ${v.motivo_bloqueo ? `<div class="mt-1 text-xs text-rose-700">${esc(v.motivo_bloqueo)}</div>` : ''}
+                    <button onclick="adminToggleHome('${esc(v.id)}', false)" class="mt-2 w-full rounded-xl bg-white px-3 py-2 text-xs font-black text-rose-700 ring-1 ring-rose-200">Desbloquear</button>
+                  </div>
+                `).join('') : `<p class="rounded-2xl bg-slate-50 p-3 text-sm text-slate-500 ring-1 ring-slate-200">No hay viviendas bloqueadas.</p>`}
+              </div>
+            </div>
+          </section>
+        </aside>
+      `;
+    }
+
+    function findAdminSelectedHome() {
+      if (!state.adminBlockBloque || !state.adminBlockPiso || !state.adminBlockPuerta) return null;
+      return (state.viviendas || []).find(v =>
+        v.bloque === state.adminBlockBloque &&
+        v.piso === state.adminBlockPiso &&
+        v.puerta === state.adminBlockPuerta
+      ) || null;
+    }
+
+    function selectAdminBlockPart(part, value) {
+      if (part === 'bloque') {
+        state.adminBlockBloque = value;
+        state.adminBlockPiso = '';
+        state.adminBlockPuerta = '';
+      }
+      if (part === 'piso') {
+        state.adminBlockPiso = value;
+        state.adminBlockPuerta = '';
+      }
+      if (part === 'puerta') {
+        state.adminBlockPuerta = value;
+      }
+      state.message = null;
+      render();
+    }
+
+    async function adminBlockSelectedHome() {
+      const home = findAdminSelectedHome();
+      if (!home) return setMessage('err', 'Selecciona bloque, piso y puerta.');
+      if (home.bloqueada) return setMessage('err', 'Esta vivienda ya está bloqueada.');
+      await adminToggleHome(home.id, true);
     }
 
     async function selectResource(id) {
@@ -408,7 +492,7 @@ Este software está protegido por la legislación de propiedad intelectual.
       if (!pin) return setMessage('err', 'Introduce el PIN.');
       try {
         state.loading = true; render();
-        await rpc('app_crear_reserva', {
+        const resultado = await rpc('app_crear_reserva', {
           p_codigo_acceso: state.comunidadCode,
           p_recurso_id: state.recurso.id,
           p_vivienda_id: viviendaId,
@@ -416,6 +500,10 @@ Este software está protegido por la legislación de propiedad intelectual.
           p_hora: state.selectedSlot,
           p_pin: pin,
         });
+
+        if (resultado && resultado.ok === false) {
+          throw new Error(resultado.mensaje || 'PIN incorrecto.');
+        }
         state.selectedSlot = '';
         state.pin = '';
         state.loading = false;
@@ -432,11 +520,15 @@ Este software está protegido por la legislación de propiedad intelectual.
       if (!pin) return;
       try {
         state.loading = true; render();
-        await rpc('app_cancelar_reserva', {
+        const resultado = await rpc('app_cancelar_reserva', {
           p_codigo_acceso: state.comunidadCode,
           p_reserva_id: reservaId,
           p_pin: pin.trim(),
         });
+
+        if (resultado && resultado.ok === false) {
+          throw new Error(resultado.mensaje || 'PIN incorrecto.');
+        }
         state.loading = false;
         await loadReservations();
         setMessage('ok', 'Reserva cancelada correctamente.');
@@ -514,8 +606,24 @@ Este software está protegido por la legislación de propiedad intelectual.
           await loadAdminCommunities();
           renderSuperAdminPanel();
         } else {
+          if (adminCodeRaw) {
+            const comunidad = await rpc('app_resolver_comunidad', { p_codigo_acceso: adminCodeRaw });
+            const viviendas = await rpc('app_listar_viviendas', { p_codigo_acceso: adminCodeRaw });
+            state.comunidadCode = adminCodeRaw;
+            state.comunidad = comunidad;
+            state.viviendas = viviendas || [];
+            state.recurso = comunidad.recursos?.[0] || null;
+            localStorage.setItem('reservia73_code', adminCodeRaw);
+            if (state.recurso) {
+              state.reservas = await rpc('app_listar_reservas_dia', {
+                p_codigo_acceso: state.comunidadCode,
+                p_recurso_id: state.recurso.id,
+                p_fecha: state.fecha,
+              }) || [];
+            }
+          }
           setMessage('ok', 'Sesión admin iniciada.');
-          renderCommunityAdminPanel();
+          render();
         }
       } catch (e) {
         state.loading = false;
@@ -1189,8 +1297,13 @@ Este software está protegido por la legislación de propiedad intelectual.
           p_motivo: motivo,
         });
         state.viviendas = await rpc('app_listar_viviendas', { p_codigo_acceso: state.comunidadCode });
+        if (bloquear) {
+          state.adminBlockBloque = '';
+          state.adminBlockPiso = '';
+          state.adminBlockPuerta = '';
+        }
         state.loading = false;
-        renderCommunityAdminPanel();
+        render();
       } catch (e) {
         state.loading = false;
         setMessage('err', e.message);
@@ -1215,6 +1328,8 @@ Este software está protegido por la legislación de propiedad intelectual.
     window.openCancel = openCancel;
     window.adminLogin = adminLogin;
     window.adminToggleHome = adminToggleHome;
+    window.selectAdminBlockPart = selectAdminBlockPart;
+    window.adminBlockSelectedHome = adminBlockSelectedHome;
     window.adminLogout = adminLogout;
     window.refreshSuperAdmin = refreshSuperAdmin;
     window.createFullCommunity = createFullCommunity;
